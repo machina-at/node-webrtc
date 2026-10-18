@@ -42,19 +42,47 @@ const TAR =
     ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
     : "tar";
 
-function run(command, args, options = {}) {
-  const { status } = spawnSync(command, args, { stdio: "inherit", ...options });
-  if (status) {
-    throw new Error(`${command} ${args.join(" ")} failed with ${status}`);
+// googlesource.com and GitHub occasionally answer 5xx; retry those.
+async function fetchWithRetry(url, attempts = 5) {
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(url);
+    if (response.status < 500 || attempt === attempts) {
+      return response;
+    }
+    console.error(`GET ${url} returned ${response.status}, retrying`);
+    await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+  }
+}
+
+function log(message) {
+  console.error(
+    `[download-prebuilt-webrtc ${new Date().toISOString()}] ${message}`,
+  );
+}
+
+function run(command, args) {
+  log(`${command} ${args.join(" ")}`);
+  const result = spawnSync(command, args, {
+    stdio: ["ignore", 2, 2],
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} failed with ${result.status ?? result.signal}`,
+    );
   }
 }
 
 async function download(url, file) {
-  const response = await fetch(url);
+  log(`GET ${url}`);
+  const response = await fetchWithRetry(url);
   if (!response.ok) {
     throw new Error(`GET ${url} failed with ${response.status}`);
   }
   fs.writeFileSync(file, Buffer.from(await response.arrayBuffer()));
+  log(`downloaded ${fs.statSync(file).size} bytes`);
 }
 
 async function downloadArchive(url, dir) {
@@ -135,7 +163,7 @@ async function main() {
     path.join(work, "libc++abi", "include"),
   );
   for (const name of ["__config_site", "__assertion_handler"]) {
-    const response = await fetch(
+    const response = await fetchWithRetry(
       `${GITILES}/chromium/src/buildtools/+/${buildtools}/third_party/libc++/${name}?format=TEXT`,
     );
     if (!response.ok) {

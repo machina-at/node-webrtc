@@ -18,6 +18,7 @@ concurrency:
 jobs:
   version:
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -42,6 +43,7 @@ jobs:
           - { os: ubuntu-22.04-arm, triple: linux-arm64, arch: arm64, clang: llvm }
           - { os: windows-2022, triple: win32-x64, arch: x64, clang: chromium }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     env:
       TARGET_ARCH: ${{ matrix.arch }}
     steps:
@@ -59,6 +61,7 @@ jobs:
           key: third-party-${{ matrix.triple }}-${{ hashFiles('scripts/download-prebuilt-webrtc.js', 'scripts/download-chromium-clang.js') }}
 
       - name: Download prebuilt libwebrtc
+        timeout-minutes: 10
         shell: bash
         run: |
           dir="$(node scripts/download-prebuilt-webrtc.js)"
@@ -67,6 +70,7 @@ jobs:
       # The libc++ headers that come with the prebuilt need clang 21+.
       - name: Chromium clang
         if: matrix.clang == 'chromium'
+        timeout-minutes: 10
         shell: bash
         run: |
           bin="$(node scripts/download-chromium-clang.js "$LIBWEBRTC_PREBUILT_DIR")"
@@ -79,6 +83,7 @@ jobs:
       # Chromium does not ship a clang for linux arm64 hosts.
       - name: LLVM clang
         if: matrix.clang == 'llvm'
+        timeout-minutes: 10
         run: |
           wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 21
           echo "CC=clang-21" >> "$GITHUB_ENV"
@@ -91,10 +96,12 @@ jobs:
         run: pip install ninja
 
       - name: Build
+        timeout-minutes: 30
         shell: bash
         run: node scripts/build-from-source.js
 
       - name: Test
+        timeout-minutes: 15
         shell: bash
         run: npm test
 
@@ -113,6 +120,7 @@ jobs:
   package:
     needs: [version, build]
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -146,6 +154,7 @@ jobs:
     if: github.ref_type == 'tag'
     needs: [version, package]
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

@@ -31,6 +31,24 @@ const TAR =
     ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
     : "tar";
 
+// googlesource.com and GitHub occasionally answer 5xx; retry those.
+async function fetchWithRetry(url, attempts = 5) {
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(url);
+    if (response.status < 500 || attempt === attempts) {
+      return response;
+    }
+    console.error(`GET ${url} returned ${response.status}, retrying`);
+    await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+  }
+}
+
+function log(message) {
+  console.error(
+    `[download-chromium-clang ${new Date().toISOString()}] ${message}`,
+  );
+}
+
 function readVersions(file) {
   return Object.fromEntries(
     fs
@@ -54,7 +72,7 @@ async function main() {
   const tools = readVersions(
     path.join(prebuiltDir, "VERSIONS"),
   ).WEBRTC_SRC_TOOLS_COMMIT;
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `${GITILES}/chromium/src/tools/+/${tools}/clang/scripts/update.py?format=TEXT`,
   );
   if (!response.ok) {
@@ -76,18 +94,28 @@ async function main() {
   const bin = path.join(dir, "bin");
   if (!fs.existsSync(bin)) {
     const archive = path.join(os.tmpdir(), `clang-${version}-${host}.tar.xz`);
-    const download = await fetch(`${CDS}/${host}/clang-${version}.tar.xz`);
+    const download = await fetchWithRetry(
+      `${CDS}/${host}/clang-${version}.tar.xz`,
+    );
     if (!download.ok) {
       throw new Error(`Failed to download clang: ${download.status}`);
     }
+    log(`downloading clang ${version} for ${host}`);
     fs.writeFileSync(archive, Buffer.from(await download.arrayBuffer()));
+    log(
+      `downloaded ${fs.statSync(archive).size} bytes, extracting with ${TAR}`,
+    );
     fs.mkdirSync(dir, { recursive: true });
-    const { status } = spawnSync(TAR, ["-xf", archive, "-C", dir], {
-      stdio: "inherit",
+    const result = spawnSync(TAR, ["-xf", archive, "-C", dir], {
+      stdio: ["ignore", 2, 2],
     });
-    if (status) {
-      throw new Error(`tar failed with ${status}`);
+    if (result.error) {
+      throw result.error;
     }
+    if (result.status !== 0) {
+      throw new Error(`tar failed with ${result.status ?? result.signal}`);
+    }
+    log("extracted");
     fs.rmSync(archive);
   }
   console.log(bin);
