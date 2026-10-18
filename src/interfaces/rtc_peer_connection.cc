@@ -8,7 +8,7 @@
 #include "src/interfaces/rtc_peer_connection.hh"
 
 #include <iostream>
-#include <src/api/jsep.h>
+#include <webrtc/api/jsep.h>
 #include <webrtc/api/media_types.h>
 #include <webrtc/api/peer_connection_interface.h>
 #include <webrtc/api/rtc_error.h>

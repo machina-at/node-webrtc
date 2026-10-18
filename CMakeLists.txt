@@ -30,6 +30,38 @@ include(ExternalProject)
 find_package(Git REQUIRED)
 find_package(Threads REQUIRED)
 
+set(LIBWEBRTC_PREBUILT_DIR "" CACHE PATH
+  "Link against a prebuilt libwebrtc laid out by scripts/download-prebuilt-webrtc.js instead of building it")
+
+if(LIBWEBRTC_PREBUILT_DIR)
+
+# prebuilt libwebrtc
+# -----------------------------------------------------------------------------
+
+set(libwebrtc_source_dir "${LIBWEBRTC_PREBUILT_DIR}")
+
+add_library(libwebrtc STATIC IMPORTED)
+if(WIN32)
+  set_property(TARGET libwebrtc PROPERTY IMPORTED_LOCATION "${LIBWEBRTC_PREBUILT_DIR}/lib/webrtc.lib")
+else()
+  set_property(TARGET libwebrtc PROPERTY IMPORTED_LOCATION "${LIBWEBRTC_PREBUILT_DIR}/lib/libwebrtc.a")
+endif()
+
+# The prebuilt libwebrtc.a already contains libc++, libc++abi and the video
+# codec libraries, so these only exist to keep the link line below uniform.
+foreach(lib libc++ libc++abi libbuiltin_video_encoder_factory libbuiltin_video_decoder_factory
+            librtc_internal_video_codecs libadapted_video_track_source librtc_simulcast_encoder_adapter)
+  add_library(${lib} INTERFACE)
+endforeach()
+
+set(libc++_include_dir
+  "${LIBWEBRTC_PREBUILT_DIR}/libc++/include"
+  "${LIBWEBRTC_PREBUILT_DIR}/libc++"
+)
+set(libc++abi_include_dir "${LIBWEBRTC_PREBUILT_DIR}/libc++abi/include")
+
+else()
+
 # depot_tools
 # -----------------------------------------------------------------------------
 
@@ -320,6 +352,24 @@ add_library(librtc_internal_video_codecs STATIC IMPORTED)
 add_dependencies(librtc_internal_video_codecs project_libwebrtc)
 set_property(TARGET librtc_internal_video_codecs PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/media/librtc_internal_video_codecs.a")
 
+add_library(libadapted_video_track_source STATIC IMPORTED)
+add_dependencies(libadapted_video_track_source project_libwebrtc)
+
+if(WIN32)
+  set_property(TARGET libadapted_video_track_source PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/api/video/adapted_video_track_source.lib")
+else()
+  set_property(TARGET libadapted_video_track_source PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/api/video/libadapted_video_track_source.a")
+endif()
+
+add_library(librtc_simulcast_encoder_adapter STATIC IMPORTED)
+add_dependencies(librtc_simulcast_encoder_adapter project_libwebrtc)
+
+if(WIN32)
+  set_property(TARGET librtc_simulcast_encoder_adapter PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/media/rtc_simulcast_encoder_adapter.lib")
+else()
+  set_property(TARGET librtc_simulcast_encoder_adapter PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/media/librtc_simulcast_encoder_adapter.a")
+endif()
+
 set(libc++_include_dir
   "${libwebrtc_source_dir}/src/third_party/libc++/src/include"
   "${libwebrtc_source_dir}/src/buildtools/third_party/libc++"
@@ -336,6 +386,8 @@ set(libc++abi_include_dir "${libwebrtc_source_dir}/src/third_party/libc++abi/src
 #   ${libwebrtc_source_dir}/webrtc/third_party/abseil-cpp
 #   ${libwebrtc_source_dir}/webrtc/third_party/libyuv/include
 # )
+
+endif()
 
 # catch2
 # -----------------------------------------------------------------------------
@@ -389,24 +441,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_include_directories(${MODULE} SYSTEM PRIVATE
     ${catch2_install_dir}/single_include
   )
-endif()
-
-add_library(libadapted_video_track_source STATIC IMPORTED)
-add_dependencies(libadapted_video_track_source project_libwebrtc)
-
-if(WIN32)
-  set_property(TARGET libadapted_video_track_source PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/api/video/adapted_video_track_source.lib")
-else()
-  set_property(TARGET libadapted_video_track_source PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/api/video/libadapted_video_track_source.a")
-endif()
-
-add_library(librtc_simulcast_encoder_adapter STATIC IMPORTED)
-add_dependencies(librtc_simulcast_encoder_adapter project_libwebrtc)
-
-if(WIN32)
-  set_property(TARGET librtc_simulcast_encoder_adapter PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/media/rtc_simulcast_encoder_adapter.lib")
-else()
-  set_property(TARGET librtc_simulcast_encoder_adapter PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/media/librtc_simulcast_encoder_adapter.a")
 endif()
 
 target_include_directories(${MODULE} PRIVATE

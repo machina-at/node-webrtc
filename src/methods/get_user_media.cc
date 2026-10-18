@@ -7,7 +7,7 @@
  */
 #include "src/methods/get_user_media.hh"
 
-#include <src/api/media_stream_interface.h>
+#include <webrtc/api/media_stream_interface.h>
 #include <webrtc/api/audio_options.h>
 #include <webrtc/api/peer_connection_interface.h>
 #include <webrtc/rtc_base/crypto_random.h>
