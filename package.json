@@ -1,5 +1,5 @@
 {
-  "name": "@roamhq/wrtc",
+  "name": "@10p.io/wrtc",
   "description": "Standards-compliant WebRTC implementation for Node",
   "keywords": [
     "webrtc",
@@ -8,12 +8,12 @@
   ],
   "version": "0.10.0",
   "author": "Jack Duvall <theduvallj@gmail.com> (https://duvallj.pw)",
-  "homepage": "https://github.com/WonderInventions/node-webrtc",
-  "bugs": "https://github.com/WonderInventions/node-webrtc/issues",
+  "homepage": "https://github.com/machina-at/node-webrtc",
+  "bugs": "https://github.com/machina-at/node-webrtc/issues",
   "license": "BSD-2-Clause",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/WonderInventions/node-webrtc.git"
+    "url": "git+https://github.com/machina-at/node-webrtc.git"
   },
   "main": "lib/index.js",
   "types": "types/index.d.ts",
@@ -25,11 +25,10 @@
     "types"
   ],
   "optionalDependencies": {
-    "@roamhq/wrtc-darwin-arm64": "0.10.0",
-    "@roamhq/wrtc-darwin-x64": "0.10.0",
-    "@roamhq/wrtc-linux-arm64": "0.10.0",
-    "@roamhq/wrtc-linux-x64": "0.10.0",
-    "@roamhq/wrtc-win32-x64": "0.10.0",
+    "@10p.io/wrtc-darwin-arm64": "0.10.0",
+    "@10p.io/wrtc-linux-arm64": "0.10.0",
+    "@10p.io/wrtc-linux-x64": "0.10.0",
+    "@10p.io/wrtc-win32-x64": "0.10.0",
     "domexception": "^4.0.0"
   },
   "devDependencies": {
@@ -64,5 +63,9 @@
     "*.js": "eslint --cache --fix",
     "*.{js,css,md}": "prettier --write",
     "*.{cc,h}": "clang-format -i"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

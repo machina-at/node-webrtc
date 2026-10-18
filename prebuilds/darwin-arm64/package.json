@@ -1,10 +1,10 @@
 {
-  "name": "@roamhq/wrtc-darwin-arm64",
+  "name": "@10p.io/wrtc-darwin-arm64",
   "version": "0.10.0",
-  "description": "The MacOS 64-bit ARM binary for @roamhq/wrtc.",
+  "description": "The MacOS 64-bit ARM binary for @10p.io/wrtc.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/WonderInventions/node-webrtc.git"
+    "url": "git+https://github.com/machina-at/node-webrtc.git"
   },
   "license": "BSD-2-Clause",
   "os": [
@@ -12,5 +12,9 @@
   ],
   "cpu": [
     "arm64"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }

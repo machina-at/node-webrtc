@@ -141,6 +141,7 @@ jobs:
             cp "$dir/prebuilds/$triple/wrtc.node" "prebuilds/$triple/wrtc.node"
             cp "$dir"/dist/*.tgz dist/
           done
+          node scripts/package-prebuilt.js main "${{ needs.version.outputs.version }}" dist
           node scripts/package-prebuilt.js bundle "${{ needs.version.outputs.version }}" dist
           ls -l dist
 
@@ -171,4 +172,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --prerelease \
-            --notes "Install with: npm install https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/roamhq-wrtc-${{ needs.version.outputs.version }}.tgz"
+            --notes "Publish to npm with \`node scripts/publish-npm.js $GITHUB_REF_NAME\`. Without npm: \`npm install https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/10p.io-wrtc-${{ needs.version.outputs.version }}-bundle.tgz\`"
