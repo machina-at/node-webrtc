@@ -10,7 +10,13 @@ macro(assign_bool var)
   endif()
 endmacro()
 
-assign_bool(use_custom_libcxx "TRUE")
+# The prebuilt libwebrtc for Windows is built against the MSVC STL (libcpmt)
+# rather than Chromium's libc++, so the addon has to use the same.
+if (WIN32 AND LIBWEBRTC_PREBUILT_DIR)
+  assign_bool(use_custom_libcxx "FALSE")
+else()
+  assign_bool(use_custom_libcxx "TRUE")
+endif()
 assign_bool(is_arm32 "y$ENV{TARGET_ARCH}" STREQUAL "yarm")
 assign_bool(is_arm64 "y$ENV{TARGET_ARCH}" STREQUAL "yarm64")
 
@@ -18,7 +24,7 @@ if (APPLE AND ${is_arm64})
   set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE INTERNAL "" FORCE)
 endif()
 
-if (WIN32 AND ${use_custom_libcxx})
+if (WIN32)
   set(CMAKE_C_COMPILER "clang-cl" CACHE STRING "" FORCE)
   set(CMAKE_CXX_COMPILER "clang-cl" CACHE STRING "" FORCE)
 endif()
