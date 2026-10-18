@@ -481,7 +481,10 @@ if(WIN32)
   )
 
   if (${use_custom_libcxx})
-    target_include_directories(${MODULE} SYSTEM PRIVATE
+    # clang-cl searches SYSTEM directories after those in %INCLUDE% (MSVC and
+    # the UCRT), so libc++'s <stddef.h> wrapper would lose to the UCRT one.
+    # Put libc++ first as a regular include directory instead.
+    target_include_directories(${MODULE} BEFORE PRIVATE
       ${libc++_include_dir}
     )
 
