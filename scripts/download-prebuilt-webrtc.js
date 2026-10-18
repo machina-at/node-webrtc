@@ -35,6 +35,13 @@ const ASSETS = {
 
 const GITILES = "https://chromium.googlesource.com";
 
+// On Windows, Git Bash's GNU tar reads "D:\..." as a remote host and cannot
+// extract zip files, so use the bsdtar that ships with Windows.
+const TAR =
+  process.platform === "win32"
+    ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
+    : "tar";
+
 function run(command, args, options = {}) {
   const { status } = spawnSync(command, args, { stdio: "inherit", ...options });
   if (status) {
@@ -57,7 +64,7 @@ async function downloadArchive(url, dir) {
   );
   await download(url, file);
   fs.mkdirSync(dir, { recursive: true });
-  run("tar", ["-xzf", file, "-C", dir]);
+  run(TAR, ["-xzf", file, "-C", dir]);
   fs.rmSync(file);
 }
 
@@ -103,7 +110,7 @@ async function main() {
     `https://github.com/${REPO}/releases/download/${RELEASE}/${asset}`,
     archive,
   );
-  run("tar", ["-xf", archive, "-C", work]);
+  run(TAR, ["-xf", archive, "-C", work]);
   fs.rmSync(archive);
 
   // webrtc/include -> webrtc, webrtc/lib -> lib

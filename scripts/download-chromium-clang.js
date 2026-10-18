@@ -24,6 +24,13 @@ const HOSTS = {
 const GITILES = "https://chromium.googlesource.com";
 const CDS = "https://commondatastorage.googleapis.com/chromium-browser-clang";
 
+// On Windows, Git Bash's GNU tar reads "D:\..." as a remote host and cannot
+// extract zip files, so use the bsdtar that ships with Windows.
+const TAR =
+  process.platform === "win32"
+    ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
+    : "tar";
+
 function readVersions(file) {
   return Object.fromEntries(
     fs
@@ -75,7 +82,7 @@ async function main() {
     }
     fs.writeFileSync(archive, Buffer.from(await download.arrayBuffer()));
     fs.mkdirSync(dir, { recursive: true });
-    const { status } = spawnSync("tar", ["-xf", archive, "-C", dir], {
+    const { status } = spawnSync(TAR, ["-xf", archive, "-C", dir], {
       stdio: "inherit",
     });
     if (status) {

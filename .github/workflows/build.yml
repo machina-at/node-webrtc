@@ -2,9 +2,10 @@ name: build
 
 on:
   push:
-    branches: [develop, "feat/**", "fix/**"]
+    branches: [develop]
     tags: ["v*"]
   pull_request:
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
@@ -59,14 +60,16 @@ jobs:
 
       - name: Download prebuilt libwebrtc
         shell: bash
-        run: echo "LIBWEBRTC_PREBUILT_DIR=$(node scripts/download-prebuilt-webrtc.js | tail -1)" >> "$GITHUB_ENV"
+        run: |
+          dir="$(node scripts/download-prebuilt-webrtc.js)"
+          echo "LIBWEBRTC_PREBUILT_DIR=$dir" >> "$GITHUB_ENV"
 
       # The libc++ headers that come with the prebuilt need clang 21+.
       - name: Chromium clang
         if: matrix.clang == 'chromium'
         shell: bash
         run: |
-          bin="$(node scripts/download-chromium-clang.js "$LIBWEBRTC_PREBUILT_DIR" | tail -1)"
+          bin="$(node scripts/download-chromium-clang.js "$LIBWEBRTC_PREBUILT_DIR")"
           echo "$bin" >> "$GITHUB_PATH"
           if [ "$RUNNER_OS" != Windows ]; then
             echo "CC=$bin/clang" >> "$GITHUB_ENV"

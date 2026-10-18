@@ -178,6 +178,11 @@ void RTCPeerConnection::OnIceCandidate(
   }
 
   Dispatch(CreateCallback<RTCPeerConnection>([this, candidate, error]() {
+    // A candidate gathered before close() can be delivered after it; a closed
+    // RTCPeerConnection must not fire events.
+    if (!_jinglePeerConnection) {
+      return;
+    }
     if (error.empty()) {
       auto env = Env();
       auto maybeCandidate =
