@@ -1,0 +1,162 @@
+name: build
+
+on:
+  push:
+    branches: [develop, "feat/**", "fix/**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(node -p 'require("./package.json").version')-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, triple: darwin-arm64, arch: arm64, clang: chromium }
+          - { os: ubuntu-22.04, triple: linux-x64, arch: x64, clang: chromium }
+          - { os: ubuntu-22.04-arm, triple: linux-arm64, arch: arm64, clang: llvm }
+          - { os: windows-2022, triple: win32-x64, arch: x64, clang: chromium }
+    runs-on: ${{ matrix.os }}
+    env:
+      TARGET_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install --ignore-scripts --no-audit --no-fund
+
+      - uses: actions/cache@v4
+        with:
+          path: third_party
+          key: third-party-${{ matrix.triple }}-${{ hashFiles('scripts/download-prebuilt-webrtc.js', 'scripts/download-chromium-clang.js') }}
+
+      - name: Download prebuilt libwebrtc
+        shell: bash
+        run: echo "LIBWEBRTC_PREBUILT_DIR=$(node scripts/download-prebuilt-webrtc.js | tail -1)" >> "$GITHUB_ENV"
+
+      # The libc++ headers that come with the prebuilt need clang 21+.
+      - name: Chromium clang
+        if: matrix.clang == 'chromium'
+        shell: bash
+        run: |
+          bin="$(node scripts/download-chromium-clang.js "$LIBWEBRTC_PREBUILT_DIR" | tail -1)"
+          echo "$bin" >> "$GITHUB_PATH"
+          if [ "$RUNNER_OS" != Windows ]; then
+            echo "CC=$bin/clang" >> "$GITHUB_ENV"
+            echo "CXX=$bin/clang++" >> "$GITHUB_ENV"
+          fi
+
+      # Chromium does not ship a clang for linux arm64 hosts.
+      - name: LLVM clang
+        if: matrix.clang == 'llvm'
+        run: |
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 21
+          echo "CC=clang-21" >> "$GITHUB_ENV"
+          echo "CXX=clang++-21" >> "$GITHUB_ENV"
+
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - if: runner.os == 'Windows'
+        run: pip install ninja
+
+      - name: Build
+        shell: bash
+        run: node scripts/build-from-source.js
+
+      - name: Test
+        shell: bash
+        run: npm test
+
+      - name: Package
+        shell: bash
+        run: node scripts/package-prebuilt.js platform "${{ needs.version.outputs.version }}" dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuild-${{ matrix.triple }}
+          path: |
+            prebuilds/${{ matrix.triple }}/wrtc.node
+            dist/*.tgz
+          if-no-files-found: error
+
+  package:
+    needs: [version, build]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: prebuild-*
+          path: artifacts
+
+      - name: Bundle
+        run: |
+          mkdir -p dist
+          for dir in artifacts/prebuild-*; do
+            triple="${dir#artifacts/prebuild-}"
+            cp "$dir/prebuilds/$triple/wrtc.node" "prebuilds/$triple/wrtc.node"
+            cp "$dir"/dist/*.tgz dist/
+          done
+          node scripts/package-prebuilt.js bundle "${{ needs.version.outputs.version }}" dist
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/*.tgz
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, package]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tgz \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --prerelease \
+            --notes "Install with: npm install https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/roamhq-wrtc-${{ needs.version.outputs.version }}.tgz"

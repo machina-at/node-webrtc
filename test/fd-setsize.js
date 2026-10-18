@@ -37,6 +37,11 @@ for (let i = 0; i < Number(process.argv[1]); i++) {
 `;
 
 test("a data channel works when descriptors exceed FD_SETSIZE", (t) => {
+  if (process.platform === "win32") {
+    t.skip("FD_SETSIZE and select() only applied on POSIX");
+    t.end();
+    return;
+  }
   const result = spawnSync(process.execPath, ["-e", child, "1100"], {
     encoding: "utf8",
     timeout: 60000,
