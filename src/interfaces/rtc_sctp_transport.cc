@@ -33,7 +33,7 @@ RTCSctpTransport::RTCSctpTransport(const Napi::CallbackInfo &info)
   auto transport =
       *info[1]
            .As<Napi::External<
-               rtc::scoped_refptr<webrtc::SctpTransportInterface>>>()
+               webrtc::scoped_refptr<webrtc::SctpTransportInterface>>>()
            .Data();
 
   _transport = std::move(transport);
@@ -58,25 +58,24 @@ void RTCSctpTransport::Stop() {
   AsyncObjectWrapWithLoop<RTCSctpTransport>::Stop();
 }
 
-Wrap<RTCSctpTransport *, rtc::scoped_refptr<webrtc::SctpTransportInterface>,
+Wrap<RTCSctpTransport *, webrtc::scoped_refptr<webrtc::SctpTransportInterface>,
      PeerConnectionFactory *> *
 RTCSctpTransport::wrap() {
-  static auto wrap =
-      new node_webrtc::Wrap<RTCSctpTransport *,
-                            rtc::scoped_refptr<webrtc::SctpTransportInterface>,
-                            PeerConnectionFactory *>(RTCSctpTransport::Create);
+  static auto wrap = new node_webrtc::Wrap<
+      RTCSctpTransport *, webrtc::scoped_refptr<webrtc::SctpTransportInterface>,
+      PeerConnectionFactory *>(RTCSctpTransport::Create);
   return wrap;
 }
 
 RTCSctpTransport *RTCSctpTransport::Create(
     PeerConnectionFactory *factory,
-    rtc::scoped_refptr<webrtc::SctpTransportInterface> transport) {
+    webrtc::scoped_refptr<webrtc::SctpTransportInterface> transport) {
   auto env = constructor().Env();
 
   auto object = constructor().New(
       {factory->Value(),
-       Napi::External<rtc::scoped_refptr<webrtc::SctpTransportInterface>>::New(
-           env, &transport)});
+       Napi::External<webrtc::scoped_refptr<webrtc::SctpTransportInterface>>::
+           New(env, &transport)});
 
   auto unwrapped = Unwrap(object);
   return unwrapped;

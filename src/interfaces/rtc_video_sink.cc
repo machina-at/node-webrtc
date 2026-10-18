@@ -36,11 +36,11 @@ RTCVideoSink::RTCVideoSink(const Napi::CallbackInfo &info)
     return;
   }
   CONVERT_ARGS_OR_THROW_AND_RETURN_VOID_NAPI(
-      info, track, rtc::scoped_refptr<webrtc::VideoTrackInterface>)
+      info, track, webrtc::scoped_refptr<webrtc::VideoTrackInterface>)
 
   _track = std::move(track);
 
-  rtc::VideoSinkWants wants;
+  webrtc::VideoSinkWants wants;
   _track->AddOrUpdateSink(this, wants);
 }
 

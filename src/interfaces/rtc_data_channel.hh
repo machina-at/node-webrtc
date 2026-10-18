@@ -43,18 +43,22 @@ public:
   //
   void OnStateChange() override;
   void OnMessage(const webrtc::DataBuffer &buffer) override;
+  // Without this, libwebrtc routes callbacks through an adapter whose
+  // SetDelegate() drops callbacks that are still in flight when the observer
+  // is replaced, so messages arriving during the hand-off were lost.
+  bool IsOkToCallOnTheNetworkThread() override { return true; }
 
   void OnPeerConnectionClosed();
 
-  static ::node_webrtc::Wrap<RTCDataChannel *,
-                             rtc::scoped_refptr<webrtc::DataChannelInterface>,
-                             node_webrtc::DataChannelObserver *> *
+  static ::node_webrtc::Wrap<
+      RTCDataChannel *, webrtc::scoped_refptr<webrtc::DataChannelInterface>,
+      node_webrtc::DataChannelObserver *> *
   wrap();
 
 private:
   static RTCDataChannel *
   Create(node_webrtc::DataChannelObserver *,
-         rtc::scoped_refptr<webrtc::DataChannelInterface>);
+         webrtc::scoped_refptr<webrtc::DataChannelInterface>);
 
   static void HandleStateChange(RTCDataChannel &,
                                 webrtc::DataChannelInterface::DataState);
@@ -88,7 +92,7 @@ private:
   std::string _cached_protocol;
   uint64_t _cached_buffered_amount;
   RefPtr<PeerConnectionFactory> _factory;
-  rtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
+  webrtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
 };
 
 class DataChannelObserver : public EventQueue<RTCDataChannel>,
@@ -98,7 +102,7 @@ class DataChannelObserver : public EventQueue<RTCDataChannel>,
 public:
   DataChannelObserver(
       PeerConnectionFactory *factory,
-      rtc::scoped_refptr<webrtc::DataChannelInterface> jingleDataChannel);
+      webrtc::scoped_refptr<webrtc::DataChannelInterface> jingleDataChannel);
   ~DataChannelObserver() override = default;
 
   DataChannelObserver(const DataChannelObserver &) = delete;
@@ -106,16 +110,17 @@ public:
   DataChannelObserver &operator=(const DataChannelObserver &) = delete;
   DataChannelObserver &operator=(DataChannelObserver &&) = delete;
 
+  bool IsOkToCallOnTheNetworkThread() override { return true; }
   void OnStateChange() override;
   void OnMessage(const webrtc::DataBuffer &buffer) override;
 
-  rtc::scoped_refptr<webrtc::DataChannelInterface> channel() {
+  webrtc::scoped_refptr<webrtc::DataChannelInterface> channel() {
     return _jingleDataChannel;
   }
 
 private:
   RefPtr<PeerConnectionFactory> _factory;
-  rtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
+  webrtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
 };
 
 } // namespace node_webrtc

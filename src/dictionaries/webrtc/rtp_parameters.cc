@@ -59,11 +59,11 @@ static webrtc::RtpParameters NapiToRtpParameters(
   parameters.degradation_preference =
       degradationPreference
           .Map([](auto degradationPreference) {
-            return absl::make_optional(
+            return std::make_optional(
                 static_cast<webrtc::DegradationPreference>(
                     degradationPreference));
           })
-          .FromMaybe(absl::optional<webrtc::DegradationPreference>());
+          .FromMaybe(std::optional<webrtc::DegradationPreference>());
   return parameters;
 }
 

@@ -5,7 +5,8 @@
 #include "src/converters/napi.hh"
 
 namespace webrtc {
-class IceCandidateInterface;
+class IceCandidate;
+using IceCandidateInterface = IceCandidate;
 }
 
 #define ICE_CANDIDATE_INTERFACE webrtc::IceCandidateInterface *

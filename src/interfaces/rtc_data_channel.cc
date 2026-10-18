@@ -28,7 +28,7 @@ Napi::FunctionReference &RTCDataChannel::constructor() {
 
 DataChannelObserver::DataChannelObserver(
     PeerConnectionFactory *factory,
-    rtc::scoped_refptr<webrtc::DataChannelInterface> jingleDataChannel)
+    webrtc::scoped_refptr<webrtc::DataChannelInterface> jingleDataChannel)
     : _factory(factory), _jingleDataChannel(std::move(jingleDataChannel)) {
   _jingleDataChannel->RegisterObserver(this);
 }
@@ -95,8 +95,10 @@ void RTCDataChannel::CleanupInternals() {
   _jingleDataChannel->UnregisterObserver();
   _cached_id = _jingleDataChannel->id();
   _cached_label = _jingleDataChannel->label();
-  _cached_max_packet_life_time = _jingleDataChannel->maxRetransmitTime();
-  _cached_max_retransmits = _jingleDataChannel->maxRetransmits();
+  _cached_max_packet_life_time = static_cast<uint16_t>(
+      _jingleDataChannel->maxPacketLifeTime().value_or(-1));
+  _cached_max_retransmits = static_cast<uint16_t>(
+      _jingleDataChannel->maxRetransmitsOpt().value_or(-1));
   _cached_negotiated = _jingleDataChannel->negotiated();
   _cached_ordered = _jingleDataChannel->ordered();
   _cached_protocol = _jingleDataChannel->protocol();
@@ -106,17 +108,32 @@ void RTCDataChannel::CleanupInternals() {
 
 void RTCDataChannel::OnPeerConnectionClosed() {
   if (_jingleDataChannel != nullptr) {
-    Stop();
+    // Since M11x the closed state is delivered asynchronously, after
+    // PeerConnection::Close() has returned. Unregister and emit "close" here
+    // so the event is not lost when the wrap caches are cleared.
+    CleanupInternals();
+    Dispatch(CreateCallback<RTCDataChannel>([this]() {
+      RTCDataChannel::HandleStateChange(*this,
+                                        webrtc::DataChannelInterface::kClosed);
+    }));
   }
 }
 
 void RTCDataChannel::OnStateChange() {
   auto state = _jingleDataChannel->state();
-  if (state == webrtc::DataChannelInterface::kClosed) {
-    CleanupInternals();
-  }
-  Dispatch(CreateCallback<RTCDataChannel>(
-      [this, state]() { RTCDataChannel::HandleStateChange(*this, state); }));
+  // This runs on the network thread. UnregisterObserver() blocks on the
+  // signaling thread, which may itself be waiting on the network thread (e.g.
+  // inside PeerConnection::Close()), so clean up on the JS thread instead.
+  Dispatch(CreateCallback<RTCDataChannel>([this, state]() {
+    if (state == webrtc::DataChannelInterface::kClosed) {
+      if (_jingleDataChannel == nullptr) {
+        // OnPeerConnectionClosed() already emitted "close".
+        return;
+      }
+      CleanupInternals();
+    }
+    RTCDataChannel::HandleStateChange(*this, state);
+  }));
 }
 
 void RTCDataChannel::HandleStateChange(
@@ -213,7 +230,7 @@ Napi::Value RTCDataChannel::Send(const Napi::CallbackInfo &info) {
 
 #pragma clang unsafe_buffer_usage begin
       auto content = static_cast<char *>(arraybuffer.Data());
-      rtc::CopyOnWriteBuffer buffer(content + byte_offset, byte_length);
+      webrtc::CopyOnWriteBuffer buffer(content + byte_offset, byte_length);
 #pragma clang unsafe_buffer_usage end
 
       webrtc::DataBuffer data_buffer(buffer, true);
@@ -260,18 +277,22 @@ Napi::Value RTCDataChannel::GetLabel(const Napi::CallbackInfo &info) {
 
 Napi::Value
 RTCDataChannel::GetMaxPacketLifeTime(const Napi::CallbackInfo &info) {
-  auto max_packet_life_time = _jingleDataChannel
-                                  ? _jingleDataChannel->maxRetransmitTime()
-                                  : _cached_max_packet_life_time;
+  auto max_packet_life_time =
+      _jingleDataChannel
+          ? static_cast<uint16_t>(
+                _jingleDataChannel->maxPacketLifeTime().value_or(-1))
+          : _cached_max_packet_life_time;
   CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), max_packet_life_time, result,
                                    Napi::Value)
   return result;
 }
 
 Napi::Value RTCDataChannel::GetMaxRetransmits(const Napi::CallbackInfo &info) {
-  auto max_retransmits = _jingleDataChannel
-                             ? _jingleDataChannel->maxRetransmits()
-                             : _cached_max_retransmits;
+  auto max_retransmits =
+      _jingleDataChannel
+          ? static_cast<uint16_t>(
+                _jingleDataChannel->maxRetransmitsOpt().value_or(-1))
+          : _cached_max_retransmits;
   CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), max_retransmits, result,
                                    Napi::Value)
   return result;
@@ -327,12 +348,12 @@ void RTCDataChannel::SetBinaryType(const Napi::CallbackInfo &info,
   _binaryType = maybeBinaryType.UnsafeFromValid();
 }
 
-Wrap<RTCDataChannel *, rtc::scoped_refptr<webrtc::DataChannelInterface>,
+Wrap<RTCDataChannel *, webrtc::scoped_refptr<webrtc::DataChannelInterface>,
      node_webrtc::DataChannelObserver *> *
 RTCDataChannel::wrap() {
   static auto wrap =
       new node_webrtc::Wrap<RTCDataChannel *,
-                            rtc::scoped_refptr<webrtc::DataChannelInterface>,
+                            webrtc::scoped_refptr<webrtc::DataChannelInterface>,
                             node_webrtc::DataChannelObserver *>(
           RTCDataChannel::Create);
   return wrap;
@@ -342,7 +363,7 @@ RTCDataChannel *RTCDataChannel::Create(
     node_webrtc::DataChannelObserver *observer,
     // TODO(jack): see if this is actually needed to keep the ref alive for
     // long enough, or if it can be deleted.
-    rtc::scoped_refptr<webrtc::DataChannelInterface>) { // NOLINT
+    webrtc::scoped_refptr<webrtc::DataChannelInterface>) { // NOLINT
   auto env = constructor().Env();
   Napi::HandleScope scope(env);
 

@@ -34,10 +34,10 @@ public:
 
   static void Init(Napi::Env, Napi::Object);
 
-  rtc::scoped_refptr<webrtc::RtpSenderInterface> sender() { return _sender; }
+  webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender() { return _sender; }
 
   static ::node_webrtc::Wrap<RTCRtpSender *,
-                             rtc::scoped_refptr<webrtc::RtpSenderInterface>,
+                             webrtc::scoped_refptr<webrtc::RtpSenderInterface>,
                              PeerConnectionFactory *> *
   wrap();
 
@@ -45,7 +45,7 @@ public:
 
 private:
   static RTCRtpSender *Create(PeerConnectionFactory *,
-                              rtc::scoped_refptr<webrtc::RtpSenderInterface>);
+                              webrtc::scoped_refptr<webrtc::RtpSenderInterface>);
 
   Napi::Value GetTrack(const Napi::CallbackInfo &);
   Napi::Value GetTransport(const Napi::CallbackInfo &);
@@ -60,7 +60,7 @@ private:
   Napi::Value SetStreams(const Napi::CallbackInfo &);
 
   RefPtr<PeerConnectionFactory> _factory;
-  rtc::scoped_refptr<webrtc::RtpSenderInterface> _sender;
+  webrtc::scoped_refptr<webrtc::RtpSenderInterface> _sender;
   OwnedWrap<MediaStreamTrack> _track_wrap;
   OwnedWrap<RTCDtlsTransport> _transport_wrap;
 };

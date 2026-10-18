@@ -36,7 +36,7 @@ public:
   static void Init(Napi::Env, Napi::Object);
 
   static ::node_webrtc::Wrap<RTCSctpTransport *,
-                             rtc::scoped_refptr<webrtc::SctpTransportInterface>,
+                             webrtc::scoped_refptr<webrtc::SctpTransportInterface>,
                              PeerConnectionFactory *> *
   wrap();
 
@@ -50,16 +50,16 @@ private:
 
   static RTCSctpTransport *
   Create(PeerConnectionFactory *,
-         rtc::scoped_refptr<webrtc::SctpTransportInterface>);
+         webrtc::scoped_refptr<webrtc::SctpTransportInterface>);
 
   Napi::Value GetTransport(const Napi::CallbackInfo &);
   Napi::Value GetState(const Napi::CallbackInfo &);
   Napi::Value GetMaxMessageSize(const Napi::CallbackInfo &);
   Napi::Value GetMaxChannels(const Napi::CallbackInfo &);
 
-  rtc::scoped_refptr<webrtc::DtlsTransportInterface> _dtls_transport;
+  webrtc::scoped_refptr<webrtc::DtlsTransportInterface> _dtls_transport;
   RefPtr<PeerConnectionFactory> _factory;
-  rtc::scoped_refptr<webrtc::SctpTransportInterface> _transport;
+  webrtc::scoped_refptr<webrtc::SctpTransportInterface> _transport;
 
   OwnedWrap<RTCDtlsTransport> _transport_wrap;
 };

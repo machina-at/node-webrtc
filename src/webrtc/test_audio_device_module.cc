@@ -40,7 +40,7 @@ namespace node_webrtc {
 namespace {
 
 constexpr int kFrameLengthUs = 10000;
-constexpr int kFramesPerSecond = rtc::kNumMicrosecsPerSec / kFrameLengthUs;
+constexpr int kFramesPerSecond = webrtc::kNumMicrosecsPerSec / kFrameLengthUs;
 
 // TestAudioDeviceModule implements an AudioDevice module that can act both as a
 // capturer and a renderer. It will use 10ms audio frames.
@@ -84,33 +84,55 @@ public:
     // the destructor.
     StopPlayout();   // NOLINT
     StopRecording(); // NOLINT
-    if (thread_) {
-      {
-        rtc::CritScope cs(&lock_);
-        stop_thread_ = true;
-      }
-      thread_->Finalize();
-    }
+    StopThread();
   }
 
+  // Since M12x the voice engine calls Init()/Terminate() each time the media
+  // engine is acquired/released, so both must be safe to call repeatedly.
   int32_t Init() override {
-    thread_ = absl::make_unique<rtc::PlatformThread>(
-        rtc::PlatformThread::SpawnJoinable(
+    if (thread_) {
+      return 0;
+    }
+    {
+      webrtc::CritScope cs(&lock_);
+      stop_thread_ = false;
+    }
+    thread_ = absl::make_unique<webrtc::PlatformThread>(
+        webrtc::PlatformThread::SpawnJoinable(
             [this]() { TestAudioDeviceModuleImpl::Run(this); },
             "TestAudioDeviceModuleImpl",
-            rtc::ThreadAttributes{rtc::ThreadPriority::kHigh}));
+            webrtc::ThreadAttributes{webrtc::ThreadPriority::kHigh}));
     return 0;
   }
 
+  int32_t Terminate() override {
+    StopThread();
+    return 0;
+  }
+
+  [[nodiscard]] bool Initialized() const override { return thread_ != nullptr; }
+
+  void StopThread() {
+    if (!thread_) {
+      return;
+    }
+    {
+      webrtc::CritScope cs(&lock_);
+      stop_thread_ = true;
+    }
+    thread_->Finalize();
+    thread_ = nullptr;
+  }
+
   int32_t RegisterAudioCallback(webrtc::AudioTransport *callback) override {
-    rtc::CritScope cs(&lock_);
+    webrtc::CritScope cs(&lock_);
     RTC_DCHECK(callback || audio_callback_);
     audio_callback_ = callback;
     return 0;
   }
 
   int32_t StartPlayout() override {
-    rtc::CritScope cs(&lock_);
+    webrtc::CritScope cs(&lock_);
     RTC_CHECK(renderer_);
     rendering_ = true;
     done_rendering_.Reset();
@@ -118,14 +140,14 @@ public:
   }
 
   int32_t StopPlayout() override {
-    rtc::CritScope cs(&lock_);
+    webrtc::CritScope cs(&lock_);
     rendering_ = false;
     done_rendering_.Set();
     return 0;
   }
 
   int32_t StartRecording() override {
-    rtc::CritScope cs(&lock_);
+    webrtc::CritScope cs(&lock_);
     RTC_CHECK(capturer_);
     capturing_ = true;
     done_capturing_.Reset();
@@ -133,43 +155,43 @@ public:
   }
 
   int32_t StopRecording() override {
-    rtc::CritScope cs(&lock_);
+    webrtc::CritScope cs(&lock_);
     capturing_ = false;
     done_capturing_.Set();
     return 0;
   }
 
   bool Playing() const override {
-    rtc::CritScope cs(&lock_);
+    webrtc::CritScope cs(&lock_);
     return rendering_;
   }
 
   bool Recording() const override {
-    rtc::CritScope cs(&lock_);
+    webrtc::CritScope cs(&lock_);
     return capturing_;
   }
 
   // Blocks until the Renderer refuses to receive data.
   // Returns false if |timeout_ms| passes before that happens.
   bool WaitForPlayoutEnd(
-      webrtc::TimeDelta timeout_ms = rtc::Event::kForever) override {
+      webrtc::TimeDelta timeout_ms = webrtc::Event::kForever) override {
     return done_rendering_.Wait(timeout_ms);
   }
 
   // Blocks until the Recorder stops producing data.
   // Returns false if |timeout_ms| passes before that happens.
   bool WaitForRecordingEnd(
-      webrtc::TimeDelta timeout_ms = rtc::Event::kForever) override {
+      webrtc::TimeDelta timeout_ms = webrtc::Event::kForever) override {
     return done_capturing_.Wait(timeout_ms);
   }
 
 private:
   void ProcessAudio() {
-    int64_t time_us = rtc::TimeMicros();
+    int64_t time_us = webrtc::TimeMicros();
     bool logged_once = false;
     for (;;) {
       {
-        rtc::CritScope cs(&lock_);
+        webrtc::CritScope cs(&lock_);
         if (stop_thread_) {
           return;
         }
@@ -221,7 +243,7 @@ private:
           }
 
           const bool keep_rendering =
-              renderer_->Render(rtc::ArrayView<const int16_t>(
+              renderer_->Render(webrtc::ArrayView<const int16_t>(
                   playout_buffer_.data(), samples_out));
           if (!keep_rendering) {
             rendering_ = false;
@@ -233,7 +255,7 @@ private:
       // the hardcoded 10ms
       time_us += process_interval_us_;
 
-      int64_t time_left_us = time_us - rtc::TimeMicros();
+      int64_t time_left_us = time_us - webrtc::TimeMicros();
       if (time_left_us < 0) {
         if (!logged_once) {
           RTC_LOG(LS_ERROR) << "ProcessAudio is too slow";
@@ -241,10 +263,10 @@ private:
         }
       } else {
         while (time_left_us > 1000) {
-          if (rtc::Thread::SleepMs(static_cast<int>(time_left_us / 1000))) {
+          if (webrtc::Thread::SleepMs(static_cast<int>(time_left_us / 1000))) {
             break;
           }
-          time_left_us = time_us - rtc::TimeMicros();
+          time_left_us = time_us - webrtc::TimeMicros();
         }
       }
     }
@@ -260,17 +282,17 @@ private:
       renderer_ RTC_GUARDED_BY(lock_);
   const int64_t process_interval_us_;
 
-  rtc::RecursiveCriticalSection lock_;
+  webrtc::RecursiveCriticalSection lock_;
   webrtc::AudioTransport *audio_callback_ RTC_GUARDED_BY(lock_) = nullptr;
   bool rendering_ RTC_GUARDED_BY(lock_) = false;
   bool capturing_ RTC_GUARDED_BY(lock_) = false;
-  rtc::Event done_rendering_;
-  rtc::Event done_capturing_;
+  webrtc::Event done_rendering_;
+  webrtc::Event done_capturing_;
 
   std::vector<int16_t> playout_buffer_ RTC_GUARDED_BY(lock_);
-  rtc::BufferT<int16_t> recording_buffer_ RTC_GUARDED_BY(lock_);
+  webrtc::BufferT<int16_t> recording_buffer_ RTC_GUARDED_BY(lock_);
 
-  std::unique_ptr<rtc::PlatformThread> thread_;
+  std::unique_ptr<webrtc::PlatformThread> thread_;
   bool stop_thread_ RTC_GUARDED_BY(lock_) = false;
 };
 
@@ -286,11 +308,11 @@ public:
 
   [[nodiscard]] int NumChannels() const override { return num_channels_; }
 
-  bool Capture(rtc::BufferT<int16_t> *buffer) override {
+  bool Capture(webrtc::BufferT<int16_t> *buffer) override {
     buffer->SetData(
         TestAudioDeviceModule::SamplesPerFrame(sampling_frequency_in_hz_) *
             num_channels_,
-        [&](rtc::ArrayView<int16_t> data) {
+        [&](webrtc::ArrayView<int16_t> data) {
           std::fill(data.begin(), data.end(), 0);
           return data.size();
         });
@@ -315,7 +337,9 @@ public:
 
   [[nodiscard]] int NumChannels() const override { return num_channels_; }
 
-  bool Render(rtc::ArrayView<const int16_t> /*data*/) override { return true; }
+  bool Render(webrtc::ArrayView<const int16_t> /*data*/) override {
+    return true;
+  }
 
 private:
   int sampling_frequency_in_hz_;
@@ -325,16 +349,17 @@ private:
 } // namespace
 
 size_t TestAudioDeviceModule::SamplesPerFrame(int sampling_frequency_in_hz) {
-  return rtc::CheckedDivExact(sampling_frequency_in_hz, kFramesPerSecond);
+  return webrtc::CheckedDivExact(sampling_frequency_in_hz, kFramesPerSecond);
 }
 
-rtc::scoped_refptr<TestAudioDeviceModule>
+webrtc::scoped_refptr<TestAudioDeviceModule>
 TestAudioDeviceModule::CreateTestAudioDeviceModule(
     std::unique_ptr<webrtc::TestAudioDeviceModule::Capturer> capturer,
     std::unique_ptr<webrtc::TestAudioDeviceModule::Renderer> renderer,
     float speed) {
-  return rtc::scoped_refptr<rtc::RefCountedObject<TestAudioDeviceModuleImpl>>(
-      new rtc::RefCountedObject<TestAudioDeviceModuleImpl>(
+  return webrtc::scoped_refptr<
+      webrtc::RefCountedObject<TestAudioDeviceModuleImpl>>(
+      new webrtc::RefCountedObject<TestAudioDeviceModuleImpl>(
           std::move(capturer), std::move(renderer), speed));
 }
 

@@ -12,6 +12,7 @@
 #include <webrtc/api/media_stream_interface.h>
 #include <webrtc/api/peer_connection_interface.h>
 #include <webrtc/api/scoped_refptr.h>
+#include <webrtc/rtc_base/crypto_random.h>
 
 #include "src/converters.hh"
 #include "src/converters/arguments.hh"
@@ -31,8 +32,8 @@ Napi::FunctionReference &MediaStream::constructor() {
 
 MediaStream::Impl::Impl(PeerConnectionFactory *factory)
     : _factory(factory ? factory : PeerConnectionFactory::GetOrCreateDefault()),
-      _stream(
-          _factory->factory()->CreateLocalMediaStream(rtc::CreateRandomUuid())),
+      _stream(_factory->factory()->CreateLocalMediaStream(
+          webrtc::CreateRandomUuid())),
       _shouldReleaseFactory(!factory) {}
 
 MediaStream::Impl::Impl(std::vector<MediaStreamTrack *> &tracks,
@@ -40,23 +41,23 @@ MediaStream::Impl::Impl(std::vector<MediaStreamTrack *> &tracks,
     : _factory(factory          ? factory
                : tracks.empty() ? PeerConnectionFactory::GetOrCreateDefault()
                                 : tracks[0]->factory()),
-      _stream(
-          _factory->factory()->CreateLocalMediaStream(rtc::CreateRandomUuid())),
+      _stream(_factory->factory()->CreateLocalMediaStream(
+          webrtc::CreateRandomUuid())),
       _shouldReleaseFactory(!factory && tracks.empty()) {
   for (auto const &track : tracks) {
     auto const kind = track->track()->kind();
     if (kind == webrtc::AudioTrackInterface::kAudioKind) {
-      _stream->AddTrack(rtc::scoped_refptr<webrtc::AudioTrackInterface>(
+      _stream->AddTrack(webrtc::scoped_refptr<webrtc::AudioTrackInterface>(
           static_cast<webrtc::AudioTrackInterface *>(track->track().get())));
     } else if (kind == webrtc::VideoTrackInterface::kVideoKind) {
-      _stream->AddTrack(rtc::scoped_refptr<webrtc::VideoTrackInterface>(
+      _stream->AddTrack(webrtc::scoped_refptr<webrtc::VideoTrackInterface>(
           static_cast<webrtc::VideoTrackInterface *>(track->track().get())));
     }
   }
 }
 
 MediaStream::Impl::Impl(
-    rtc::scoped_refptr<webrtc::MediaStreamInterface> &stream,
+    webrtc::scoped_refptr<webrtc::MediaStreamInterface> &stream,
     PeerConnectionFactory *factory)
     : _factory(factory ? factory : PeerConnectionFactory::GetOrCreateDefault()),
       _stream(stream), _shouldReleaseFactory(!factory) {}
@@ -75,10 +76,10 @@ MediaStream::Impl::~Impl() {
   }
 }
 
-std::vector<rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>>
+std::vector<webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>>
 MediaStream::tracks() {
   auto tracks =
-      std::vector<rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>>();
+      std::vector<webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>>();
   for (auto const &track : _impl._stream->GetAudioTracks()) {
     tracks.emplace_back(track);
   }
@@ -88,7 +89,7 @@ MediaStream::tracks() {
   return tracks;
 }
 
-rtc::scoped_refptr<webrtc::MediaStreamInterface> MediaStream::stream() {
+webrtc::scoped_refptr<webrtc::MediaStreamInterface> MediaStream::stream() {
   return _impl._stream;
 }
 
@@ -96,7 +97,7 @@ MediaStream::MediaStream(const Napi::CallbackInfo &info)
     : AsyncObjectWrap<MediaStream>("MediaStream", info) {
   auto maybeEither = From<Either<
       std::tuple<Napi::Object COMMA Napi::External<
-          rtc::scoped_refptr<webrtc::MediaStreamInterface>>>
+          webrtc::scoped_refptr<webrtc::MediaStreamInterface>>>
           COMMA // Either1 - Remote MediaStream OR Either2
               Either<
                   std::vector<MediaStreamTrack *>
@@ -238,10 +239,10 @@ Napi::Value MediaStream::AddTrack(const Napi::CallbackInfo &info) {
   auto stream = _impl._stream;
   auto track = mediaStreamTrack->track();
   if (track->kind() == track->kAudioKind) {
-    stream->AddTrack(rtc::scoped_refptr<webrtc::AudioTrackInterface>(
+    stream->AddTrack(webrtc::scoped_refptr<webrtc::AudioTrackInterface>(
         static_cast<webrtc::AudioTrackInterface *>(track.get())));
   } else if (track->kind() == track->kVideoKind) {
-    stream->AddTrack(rtc::scoped_refptr<webrtc::VideoTrackInterface>(
+    stream->AddTrack(webrtc::scoped_refptr<webrtc::VideoTrackInterface>(
         static_cast<webrtc::VideoTrackInterface *>(track.get())));
   }
   return info.Env().Undefined();
@@ -255,10 +256,10 @@ Napi::Value MediaStream::RemoveTrack(const Napi::CallbackInfo &info) {
   if (track->kind() == track->kAudioKind) {
     // TODO(jack): also make these remove from the _track_wrap, so we don't keep
     // around old tracks
-    stream->RemoveTrack(rtc::scoped_refptr<webrtc::AudioTrackInterface>(
+    stream->RemoveTrack(webrtc::scoped_refptr<webrtc::AudioTrackInterface>(
         static_cast<webrtc::AudioTrackInterface *>(track.get())));
   } else {
-    stream->RemoveTrack(rtc::scoped_refptr<webrtc::VideoTrackInterface>(
+    stream->RemoveTrack(webrtc::scoped_refptr<webrtc::VideoTrackInterface>(
         static_cast<webrtc::VideoTrackInterface *>(track.get())));
   }
   return info.Env().Undefined();
@@ -266,20 +267,20 @@ Napi::Value MediaStream::RemoveTrack(const Napi::CallbackInfo &info) {
 
 Napi::Value MediaStream::Clone(const Napi::CallbackInfo &info) {
   auto clonedStream = _impl._factory->factory()->CreateLocalMediaStream(
-      rtc::CreateRandomUuid());
+      webrtc::CreateRandomUuid());
   for (auto const &track : this->tracks()) {
     if (track->kind() == track->kAudioKind) {
       auto audioTrack = static_cast<webrtc::AudioTrackInterface *>(track.get());
       auto source = audioTrack->GetSource();
       auto clonedTrack = _impl._factory->factory()->CreateAudioTrack(
-          rtc::CreateRandomUuid(), source);
+          webrtc::CreateRandomUuid(), source);
       clonedStream->AddTrack(clonedTrack);
     } else {
       auto videoTrack = static_cast<webrtc::VideoTrackInterface *>(track.get());
-      auto source = rtc::scoped_refptr<webrtc::VideoTrackSourceInterface>(
+      auto source = webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface>(
           videoTrack->GetSource());
       auto clonedTrack = _impl._factory->factory()->CreateVideoTrack(
-          source, rtc::CreateRandomUuid());
+          source, webrtc::CreateRandomUuid());
       clonedStream->AddTrack(clonedTrack);
     }
   }
@@ -290,25 +291,25 @@ Napi::Value MediaStream::Clone(const Napi::CallbackInfo &info) {
   return result;
 }
 
-Wrap<MediaStream *, rtc::scoped_refptr<webrtc::MediaStreamInterface>,
+Wrap<MediaStream *, webrtc::scoped_refptr<webrtc::MediaStreamInterface>,
      PeerConnectionFactory *> *
 MediaStream::wrap() {
   static auto wrap =
       new node_webrtc::Wrap<MediaStream *,
-                            rtc::scoped_refptr<webrtc::MediaStreamInterface>,
+                            webrtc::scoped_refptr<webrtc::MediaStreamInterface>,
                             PeerConnectionFactory *>(MediaStream::Create);
   return wrap;
 }
 
-MediaStream *
-MediaStream::Create(PeerConnectionFactory *factory,
-                    rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {
+MediaStream *MediaStream::Create(
+    PeerConnectionFactory *factory,
+    webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {
   auto env = MediaStream::constructor().Env();
   Napi::HandleScope scope(env);
 
   auto object = MediaStream::constructor().New(
       {factory->Value(),
-       Napi::External<rtc::scoped_refptr<webrtc::MediaStreamInterface>>::New(
+       Napi::External<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>::New(
            env, &stream)});
 
   auto unwrapped = Unwrap(object);

@@ -34,17 +34,17 @@ Napi::FunctionReference &RTCDtlsTransport::constructor() {
 }
 
 namespace {
-std::vector<rtc::Buffer>
+std::vector<webrtc::Buffer>
 copy_certs(webrtc::DtlsTransportInformation const &information) {
   auto certs = information.remote_ssl_certificates();
   if (certs) {
     auto size = certs->GetSize();
-    auto ders = std::vector<rtc::Buffer>();
+    auto ders = std::vector<webrtc::Buffer>();
     ders.reserve(size);
     for (unsigned long i = 0; i < size; i++) {
       // TODO(mroberts): I don't know a more approriate value to initialize
       // with.
-      auto buffer = rtc::Buffer(1);
+      auto buffer = webrtc::Buffer(1);
       certs->Get(i).ToDER(&buffer);
       ders.emplace_back(std::move(buffer));
     }
@@ -68,7 +68,7 @@ RTCDtlsTransport::RTCDtlsTransport(const Napi::CallbackInfo &info)
   auto transport =
       *info[1]
            .As<Napi::External<
-               rtc::scoped_refptr<webrtc::DtlsTransportInterface>>>()
+               webrtc::scoped_refptr<webrtc::DtlsTransportInterface>>>()
            .Data();
 
   _transport = std::move(transport);
@@ -156,7 +156,7 @@ Napi::Value RTCDtlsTransport::GetState(const Napi::CallbackInfo &info) {
 Napi::Value
 RTCDtlsTransport::GetRemoteCertificates(const Napi::CallbackInfo &info) {
   std::lock_guard<std::mutex> lock(_mutex);
-  auto certs = std::vector<rtc::Buffer *>();
+  auto certs = std::vector<webrtc::Buffer *>();
   certs.reserve(_certs.size());
   for (auto &cert : _certs) {
     certs.push_back(&cert);
@@ -165,26 +165,25 @@ RTCDtlsTransport::GetRemoteCertificates(const Napi::CallbackInfo &info) {
   return result;
 }
 
-Wrap<RTCDtlsTransport *, rtc::scoped_refptr<webrtc::DtlsTransportInterface>,
+Wrap<RTCDtlsTransport *, webrtc::scoped_refptr<webrtc::DtlsTransportInterface>,
      PeerConnectionFactory *> *
 RTCDtlsTransport::wrap() {
-  static auto wrap =
-      new node_webrtc::Wrap<RTCDtlsTransport *,
-                            rtc::scoped_refptr<webrtc::DtlsTransportInterface>,
-                            PeerConnectionFactory *>(RTCDtlsTransport::Create);
+  static auto wrap = new node_webrtc::Wrap<
+      RTCDtlsTransport *, webrtc::scoped_refptr<webrtc::DtlsTransportInterface>,
+      PeerConnectionFactory *>(RTCDtlsTransport::Create);
   return wrap;
 }
 
 RTCDtlsTransport *RTCDtlsTransport::Create(
     PeerConnectionFactory *factory,
-    rtc::scoped_refptr<webrtc::DtlsTransportInterface> transport) {
+    webrtc::scoped_refptr<webrtc::DtlsTransportInterface> transport) {
   auto env = constructor().Env();
   Napi::HandleScope scope(env);
 
   auto object = constructor().New(
       {factory->Value(),
-       Napi::External<rtc::scoped_refptr<webrtc::DtlsTransportInterface>>::New(
-           env, &transport)});
+       Napi::External<webrtc::scoped_refptr<webrtc::DtlsTransportInterface>>::
+           New(env, &transport)});
 
   auto unwrapped = Unwrap(object);
   return unwrapped;

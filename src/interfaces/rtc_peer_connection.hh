@@ -28,7 +28,8 @@
 namespace webrtc {
 
 class DataChannelInterface;
-class IceCandidateInterface;
+class IceCandidate;
+using IceCandidateInterface = IceCandidate;
 class MediaStreamInterface;
 class RtpReceiverInterface;
 class RtpTransceiverInterface;
@@ -66,19 +67,19 @@ public:
   void OnRenegotiationNeeded() override;
 
   void OnDataChannel(
-      rtc::scoped_refptr<webrtc::DataChannelInterface> data_channel) override;
+      webrtc::scoped_refptr<webrtc::DataChannelInterface> data_channel) override;
 
   void
-  OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+  OnAddStream(webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
   void OnRemoveStream(
-      rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+      webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
 
   void
-  OnAddTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-             const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>
+  OnAddTrack(webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+             const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>
                  &streams) override;
   void OnTrack(
-      rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
+      webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
 
   static void Init(Napi::Env, Napi::Object);
 
@@ -130,7 +131,7 @@ private:
 
   UnsignedShortRange _port_range;
   ExtendedRTCConfiguration _cached_configuration;
-  rtc::scoped_refptr<webrtc::PeerConnectionInterface> _jinglePeerConnection;
+  webrtc::scoped_refptr<webrtc::PeerConnectionInterface> _jinglePeerConnection;
 
   // TODO(jack): make this a RefPtr if we ever stop using the default global
   // PeerConnectionFactory

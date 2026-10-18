@@ -88,8 +88,9 @@ RTCPeerConnection::RTCPeerConnection(const Napi::CallbackInfo &info)
   _shouldReleaseFactory = true;
 
   auto portAllocator =
-      std::unique_ptr<cricket::PortAllocator>(new cricket::BasicPortAllocator(
-          _factory->getNetworkManager(), _factory->getSocketFactory()));
+      std::unique_ptr<webrtc::PortAllocator>(new webrtc::BasicPortAllocator(
+          _factory->getEnvironment(), _factory->getNetworkManager(),
+          _factory->getSocketFactory()));
   _port_range = configuration.portRange;
   portAllocator->SetPortRange(_port_range.min.FromMaybe(0),
                               _port_range.max.FromMaybe(65535));
@@ -223,7 +224,7 @@ void RTCPeerConnection::OnIceCandidateError(const std::string &address,
 }
 
 void RTCPeerConnection::OnDataChannel(
-    rtc::scoped_refptr<webrtc::DataChannelInterface> channel) {
+    webrtc::scoped_refptr<webrtc::DataChannelInterface> channel) {
   auto observer = new DataChannelObserver(_factory, channel);
   Dispatch(CreateCallback<RTCPeerConnection>([this, observer]() {
     auto channel =
@@ -233,11 +234,11 @@ void RTCPeerConnection::OnDataChannel(
 }
 
 void RTCPeerConnection::OnAddStream(
-    rtc::scoped_refptr<webrtc::MediaStreamInterface>) {}
+    webrtc::scoped_refptr<webrtc::MediaStreamInterface>) {}
 
 void RTCPeerConnection::OnAddTrack(
-    rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>
+    webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+    const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>
         &streams) {
 // TODO(jack): once libwebrtc fully deprecates kPlanB, we can remove this
 #ifndef _MSC_VER
@@ -271,7 +272,7 @@ void RTCPeerConnection::OnAddTrack(
 }
 
 void RTCPeerConnection::OnTrack(
-    rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
   auto receiver = transceiver->receiver();
   auto streams = receiver->streams();
   Dispatch(CreateCallback<RTCPeerConnection>([this, transceiver, receiver,
@@ -297,7 +298,7 @@ void RTCPeerConnection::OnTrack(
 }
 
 void RTCPeerConnection::OnRemoveStream(
-    rtc::scoped_refptr<webrtc::MediaStreamInterface>) {}
+    webrtc::scoped_refptr<webrtc::MediaStreamInterface>) {}
 
 void RTCPeerConnection::OnRenegotiationNeeded() {
   Dispatch(CreateCallback<RTCPeerConnection>(
@@ -354,10 +355,9 @@ Napi::Value RTCPeerConnection::AddTransceiver(const Napi::CallbackInfo &info) {
 
   CONVERT_ARGS_OR_THROW_AND_RETURN_NAPI(
       info, args,
-      std::tuple<Either<cricket::MediaType COMMA MediaStreamTrack *> COMMA
+      std::tuple<Either<webrtc::MediaType COMMA MediaStreamTrack *> COMMA
                      Maybe<webrtc::RtpTransceiverInit>>)
-  Either<cricket::MediaType, MediaStreamTrack *> kindOrTrack =
-      std::get<0>(args);
+  Either<webrtc::MediaType, MediaStreamTrack *> kindOrTrack = std::get<0>(args);
   Maybe<webrtc::RtpTransceiverInit> maybeInit = std::get<1>(args);
   auto result =
       kindOrTrack.IsLeft()
@@ -429,8 +429,8 @@ Napi::Value RTCPeerConnection::CreateOffer(const Napi::CallbackInfo &info) {
     return deferred.Promise();
   }
 
-  auto observer =
-      rtc::make_ref_counted<CreateSessionDescriptionObserver>(this, deferred);
+  auto observer = webrtc::make_ref_counted<CreateSessionDescriptionObserver>(
+      this, deferred);
   _jinglePeerConnection->CreateOffer(observer.get(),
                                      maybeOptions.UnsafeFromValid().options);
 
@@ -456,8 +456,9 @@ Napi::Value RTCPeerConnection::CreateAnswer(const Napi::CallbackInfo &info) {
 
   auto options = maybeOptions.Map([](auto options) { return options.options; })
                      .OrDefault();
-  auto observer = new rtc::RefCountedObject<CreateSessionDescriptionObserver>(
-      this, deferred);
+  auto observer =
+      new webrtc::RefCountedObject<CreateSessionDescriptionObserver>(this,
+                                                                     deferred);
   _jinglePeerConnection->CreateAnswer(observer, options);
 
   return deferred.Promise();
@@ -496,8 +497,8 @@ RTCPeerConnection::SetLocalDescription(const Napi::CallbackInfo &info) {
     return deferred.Promise();
   }
 
-  auto observer =
-      new rtc::RefCountedObject<SetSessionDescriptionObserver>(this, deferred);
+  auto observer = new webrtc::RefCountedObject<SetSessionDescriptionObserver>(
+      this, deferred);
   _jinglePeerConnection->SetLocalDescription(observer, description.release());
 
   return deferred.Promise();
@@ -526,7 +527,7 @@ RTCPeerConnection::SetRemoteDescription(const Napi::CallbackInfo &info) {
   }
 
   auto observer =
-      rtc::make_ref_counted<SetSessionDescriptionObserver>(this, deferred);
+      webrtc::make_ref_counted<SetSessionDescriptionObserver>(this, deferred);
   _jinglePeerConnection->SetRemoteDescription(observer.get(),
                                               description.release());
 
@@ -697,7 +698,7 @@ Napi::Value RTCPeerConnection::GetStats(const Napi::CallbackInfo &info) {
   CONVERT_ARGS_OR_REJECT_AND_RETURN_NAPI(deferred, info, maybeSelector,
                                          Maybe<MediaStreamTrack *>)
 
-  auto callback = rtc::make_ref_counted<RTCStatsCollector>(this, deferred);
+  auto callback = webrtc::make_ref_counted<RTCStatsCollector>(this, deferred);
   if (maybeSelector.IsJust()) {
     auto selector = maybeSelector.UnsafeFromJust();
     auto track = selector->track();
@@ -708,7 +709,7 @@ Napi::Value RTCPeerConnection::GetStats(const Napi::CallbackInfo &info) {
     // and iterating through all senders and receivers until we find a match.
     size_t track_uses = 0U;
 
-    rtc::scoped_refptr<webrtc::RtpSenderInterface> track_sender = nullptr;
+    webrtc::scoped_refptr<webrtc::RtpSenderInterface> track_sender = nullptr;
     for (const auto &sender : _jinglePeerConnection->GetSenders()) {
       if (sender->track() == track) {
         ++track_uses;
@@ -716,7 +717,8 @@ Napi::Value RTCPeerConnection::GetStats(const Napi::CallbackInfo &info) {
       }
     }
 
-    rtc::scoped_refptr<webrtc::RtpReceiverInterface> track_receiver = nullptr;
+    webrtc::scoped_refptr<webrtc::RtpReceiverInterface> track_receiver =
+        nullptr;
     for (const auto &receiver : _jinglePeerConnection->GetReceivers()) {
       if (receiver->track() == track) {
         ++track_uses;
@@ -947,7 +949,7 @@ RTCPeerConnection::GetSignalingState(const Napi::CallbackInfo &info) {
   auto signalingState =
       _jinglePeerConnection
           ? _jinglePeerConnection->signaling_state()
-          : webrtc::PeerConnectionInterface::SignalingState ::kClosed;
+          : webrtc::PeerConnectionInterface::SignalingState::kClosed;
   CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), signalingState, result,
                                    Napi::Value)
   return result;
