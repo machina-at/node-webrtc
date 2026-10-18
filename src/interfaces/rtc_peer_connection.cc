@@ -547,12 +547,18 @@ Napi::Value RTCPeerConnection::AddIceCandidate(const Napi::CallbackInfo &info) {
       deferred, info, maybeCandidate,
       Maybe<std::shared_ptr<webrtc::IceCandidateInterface>>)
 
+  if (!_jinglePeerConnection) {
+    Reject(
+        deferred,
+        SomeError("Failed to set ICE candidate; RTCPeerConnection is closed."));
+    return deferred.Promise();
+  }
+
   Dispatch(CreatePromise<RTCPeerConnection>(deferred, [this, maybeCandidate](
                                                           auto deferred) {
+    // Closed after addIceCandidate() was called: like the operations chain in
+    // the spec, abort without settling the promise instead of rejecting it.
     if (!_jinglePeerConnection) {
-      Reject(deferred,
-             SomeError(
-                 "Failed to set ICE candidate; RTCPeerConnection is closed."));
       return;
     }
     if (_jinglePeerConnection->signaling_state() ==

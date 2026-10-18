@@ -51,5 +51,31 @@ test("addIceCandidate", (t) => {
       });
   });
 
+  test("rejects when called after close()", async (t) => {
+    const pc = new RTCPeerConnection();
+    await pc.setRemoteDescription(offer);
+    pc.close();
+    try {
+      await pc.addIceCandidate(candidate);
+      t.fail("addIceCandidate resolved");
+    } catch (error) {
+      t.pass(`addIceCandidate rejected: ${error.message}`);
+    }
+    t.end();
+  });
+
+  test("does not reject when close() happens while it is pending", async (t) => {
+    const pc = new RTCPeerConnection();
+    await pc.setRemoteDescription(offer);
+    let rejected = false;
+    pc.addIceCandidate(candidate).catch(() => {
+      rejected = true;
+    });
+    pc.close();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    t.notOk(rejected, "the pending addIceCandidate was not rejected");
+    t.end();
+  });
+
   t.end();
 });
