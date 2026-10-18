@@ -49,6 +49,19 @@ function log(message) {
   );
 }
 
+function run(command, args) {
+  log(`${command} ${args.join(" ")}`);
+  const result = spawnSync(command, args, { stdio: ["ignore", 2, 2] });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} failed with ${result.status ?? result.signal}`,
+    );
+  }
+}
+
 function readVersions(file) {
   return Object.fromEntries(
     fs
@@ -102,18 +115,17 @@ async function main() {
     }
     log(`downloading clang ${version} for ${host}`);
     fs.writeFileSync(archive, Buffer.from(await download.arrayBuffer()));
-    log(
-      `downloaded ${fs.statSync(archive).size} bytes, extracting with ${TAR}`,
-    );
+    log(`downloaded ${fs.statSync(archive).size} bytes`);
     fs.mkdirSync(dir, { recursive: true });
-    const result = spawnSync(TAR, ["-xf", archive, "-C", dir], {
-      stdio: ["ignore", 2, 2],
-    });
-    if (result.error) {
-      throw result.error;
-    }
-    if (result.status !== 0) {
-      throw new Error(`tar failed with ${result.status ?? result.signal}`);
+    if (process.platform === "win32") {
+      // Windows' tar.exe hangs on .tar.xz, so unpack the xz layer with 7-Zip
+      // (present on GitHub's Windows runners) and let tar.exe read the .tar.
+      run("7z", ["x", "-y", `-o${os.tmpdir()}`, archive]);
+      const tarball = archive.replace(/\.xz$/, "");
+      run(TAR, ["-xf", tarball, "-C", dir]);
+      fs.rmSync(tarball);
+    } else {
+      run(TAR, ["-xf", archive, "-C", dir]);
     }
     log("extracted");
     fs.rmSync(archive);
