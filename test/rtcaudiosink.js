@@ -149,9 +149,31 @@ test("RTCAudioSink should send ondata events when defined outside ontrack", (t) 
   const track = source.createTrack();
   pcA.addTrack(track);
 
+  // Push 10 frames of 10 ms and wait until the sink has seen all of them.
+  // Counting events inside a fixed 105 ms window depended on timer jitter
+  // (the negotiation above runs at the same time) and failed about half the
+  // time on both M106 and M155.
+  const frames = 10;
+  const finish = () => {
+    clearInterval(interval);
+    clearTimeout(timeout);
+    t.ok(
+      ondataDidFired >= frames,
+      `RTCAudioSink should have fired ${frames} times for ${frames} frames`,
+    );
+    sink.stop();
+    track.stop();
+    pcA.close();
+    pcB.close();
+    t.end();
+  };
+
   const sink = new RTCAudioSink(track);
   sink.addEventListener("data", () => {
     ondataDidFired += 1;
+    if (ondataDidFired === frames) {
+      finish();
+    }
   });
 
   const sampleRate = 8000;
@@ -159,23 +181,14 @@ test("RTCAudioSink should send ondata events when defined outside ontrack", (t) 
   for (let n = 0; n < samples.length; n++) {
     samples[n] = Math.random() * 0xffff;
   }
+  let sent = 0;
   const interval = setInterval(() => {
-    source.onData({ samples, sampleRate });
+    if (sent < frames) {
+      source.onData({ samples, sampleRate });
+      sent += 1;
+    }
   }, 10);
-
-  setTimeout(() => {
-    clearInterval(interval);
-    // TODO(jack): yes >= 9 and not 10 because some random thing in eventloop and setinterval/timeout result in values to be 9||10||11
-    t.ok(
-      ondataDidFired >= 9,
-      "RTCAudioSink should have fired 10 time in 100ms"
-    );
-    sink.stop();
-    track.stop();
-    pcA.close();
-    pcB.close();
-    t.end();
-  }, 105);
+  const timeout = setTimeout(finish, 5000);
 });
 
 /**

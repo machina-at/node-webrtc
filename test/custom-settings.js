@@ -28,15 +28,19 @@ tape("custom ports connect concurrently", function (t) {
 });
 
 function connectClientServer(portRange, callback) {
+  // simple-peer's default iceServers include a stun: URL with a query, which
+  // libwebrtc (like Chrome) now rejects. Loopback connections need no STUN.
   const client = new SimplePeer({
     wrtc: wrtc,
     initiator: true,
+    config: { iceServers: [] },
   });
 
   const server = new SimplePeer({
     wrtc: wrtc,
     initiator: false,
     config: {
+      iceServers: [],
       portRange: portRange,
     },
   });
