@@ -9,6 +9,7 @@ require("./connect");
 require("./create-offer");
 require("./custom-settings"); // Seems a little slow...
 require("./destructor");
+require("./fd-setsize");
 require("./get-configuration");
 require("./get-settings");
 require("./i420helpers");
