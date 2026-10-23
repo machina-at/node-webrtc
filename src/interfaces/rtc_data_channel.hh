@@ -119,7 +119,12 @@ public:
   }
 
 private:
-  RefPtr<PeerConnectionFactory> _factory;
+  // Raw, not RefPtr: OnDataChannel constructs this on the signaling thread,
+  // and RefPtr's Ref()/Unref() are N-API calls that must only run on the main
+  // thread. RTCDataChannel takes the strong reference when it adopts this
+  // observer on the main thread. The RTCPeerConnection that created this
+  // observer keeps the factory alive until then.
+  PeerConnectionFactory *_factory;
   webrtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
 };
 

@@ -230,8 +230,17 @@ void RTCPeerConnection::OnIceCandidateError(const std::string &address,
 
 void RTCPeerConnection::OnDataChannel(
     webrtc::scoped_refptr<webrtc::DataChannelInterface> channel) {
+  // Runs on the signaling thread: DataChannelObserver must not touch N-API
+  // here (see rtc_data_channel.hh).
   auto observer = new DataChannelObserver(_factory, channel);
   Dispatch(CreateCallback<RTCPeerConnection>([this, observer]() {
+    if (_factory == nullptr) {
+      // Closed before this event reached the main thread: the factory may
+      // already be released, so do not hand the observer to RTCDataChannel.
+      observer->channel()->UnregisterObserver();
+      delete observer;
+      return;
+    }
     auto channel =
         _data_channel_wrap.GetOrCreate(observer, observer->channel());
     MakeCallback("ondatachannel", {channel->Value()});

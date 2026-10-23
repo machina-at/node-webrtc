@@ -17,6 +17,7 @@ require("./iceservers");
 require("./mediastream");
 require("./multiconnect"); // Seems a little slow...
 require("./pass-interface-to-method");
+require("./remote-data-channel-gc");
 require("./rollback");
 require("./rtcaudiosink");
 require("./rtcaudiosource");
