@@ -1,0 +1,47 @@
+name: publish
+
+# Publishes the tarballs that a tag's build attached to its GitHub Release.
+# Called by build.yml after `release`; run it by hand to (re)publish an
+# existing release. Versions already on npm are skipped.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+    secrets:
+      NODE_WEBRTC_NPM_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (e.g. v0.10.0-m155.2)
+        type: string
+        required: true
+      dist-tag:
+        description: npm dist-tag (empty = publish-npm.js default)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish to npm
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_WEBRTC_NPM_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          DIST_TAG: ${{ inputs.dist-tag }}
+        run: node scripts/publish-npm.js "$TAG" ${DIST_TAG:+--dist-tag "$DIST_TAG"}
