@@ -172,4 +172,13 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --prerelease \
-            --notes "Publish to npm with \`node scripts/publish-npm.js $GITHUB_REF_NAME\`. Without npm: \`npm install https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/10p.io-wrtc-${{ needs.version.outputs.version }}-bundle.tgz\`"
+            --notes "Published to npm by the \`publish\` job (re-run: \`publish.yml\` with tag $GITHUB_REF_NAME). Without npm: \`npm install https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/10p.io-wrtc-${{ needs.version.outputs.version }}-bundle.tgz\`"
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: release
+    uses: ./.github/workflows/publish.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      NODE_WEBRTC_NPM_TOKEN: ${{ secrets.NODE_WEBRTC_NPM_TOKEN }}

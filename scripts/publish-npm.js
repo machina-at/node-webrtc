@@ -8,7 +8,7 @@
 //
 // Usage: node scripts/publish-npm.js <tag> [--dist-tag <tag>] [--dry-run]
 //
-// Needs `gh` (to download the release) and an npm login or NPM_TOKEN with
+// Needs `gh` (to download the release) and an npm login or NODE_AUTH_TOKEN with
 // publish rights on @10p.io. Versions that are already on npm are skipped, so
 // the script can be re-run after a partial failure.
 
@@ -52,7 +52,10 @@ function isPublished(name, version) {
 function main() {
   const { tag, distTag, dryRun } = parseArgs(process.argv.slice(2));
   const version = tag.replace(/^v/, "");
-  const npmTag = distTag ?? (version.includes("-") ? "next" : "latest");
+  // x.y.z and x.y.z-m<milestone>.<n> (a libwebrtc milestone build) are
+  // releases; any other prerelease goes to "next".
+  const npmTag =
+    distTag ?? (/^\d+\.\d+\.\d+(-m\d+\.\d+)?$/.test(version) ? "latest" : "next");
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wrtc-publish-"));
   execFileSync(
