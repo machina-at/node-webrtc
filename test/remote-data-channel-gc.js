@@ -41,19 +41,32 @@ async function pair(r) {
   mark("pair", r);
   const a = new RTCPeerConnection();
   const b = new RTCPeerConnection();
-  a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate).catch(() => {});
-  b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate).catch(() => {});
+  // Hold candidates until the other side has a remote description;
+  // addIceCandidate before that fails and the candidate is lost.
+  const relay = (to) => {
+    const pending = [];
+    return {
+      add: (c) => (to.remoteDescription ? to.addIceCandidate(c).catch(() => {}) : pending.push(c)),
+      flush: () => pending.splice(0).forEach((c) => to.addIceCandidate(c).catch(() => {})),
+    };
+  };
+  const toA = relay(a), toB = relay(b);
+  a.onicecandidate = (e) => e.candidate && toB.add(e.candidate);
+  b.onicecandidate = (e) => e.candidate && toA.add(e.candidate);
   let received = 0;
   b.ondatachannel = ({ channel }) => { received++; channel.close(); };
   const boot = a.createDataChannel("boot");
+  const bootOpen = new Promise((resolve) => { boot.onopen = resolve; });
   mark("offer", r);
   await a.setLocalDescription(await a.createOffer());
   await b.setRemoteDescription(a.localDescription);
+  toB.flush();
   mark("answer", r);
   await b.setLocalDescription(await b.createAnswer());
   await a.setRemoteDescription(b.localDescription);
+  toA.flush();
   mark("boot-open", r);
-  await new Promise((resolve) => { boot.onopen = resolve; });
+  await bootOpen;
   return { a, b, received: () => received };
 }
 (async () => {
