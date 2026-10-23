@@ -44,6 +44,7 @@ async function pair() {
     while (p.received() < PER && Date.now() - start < 10000) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
+    console.log("round " + r + " received " + p.received() + "/" + PER + " in " + (Date.now() - start) + "ms");
     p.a.close();
     p.b.close();
   }
@@ -60,13 +61,14 @@ test("remote data channels collected by GC do not crash the process", (t) => {
       ["--expose-gc", "-e", child, "30", "200"],
       { encoding: "utf8", timeout: 180000, killSignal: "SIGKILL" },
     );
-    if (result.signal !== null || result.stdout.trim() !== "DONE") {
+    const lines = result.stdout.trim().split("\n");
+    if (result.signal !== null || lines.at(-1) !== "DONE") {
       t.comment(
-        `run ${run}: status=${result.status} signal=${result.signal} stderr=${result.stderr.slice(0, 500)}`,
+        `run ${run}: status=${result.status} signal=${result.signal} last=${JSON.stringify(lines.slice(-3))} stderr=${result.stderr.slice(0, 500)}`,
       );
     }
     t.equal(result.signal, null, `run ${run}: the process was not killed by a signal`);
-    t.equal(result.stdout.trim(), "DONE", `run ${run}: every round finished`);
+    t.equal(lines.at(-1), "DONE", `run ${run}: every round finished`);
   }
   t.end();
 });
