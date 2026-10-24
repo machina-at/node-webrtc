@@ -154,7 +154,10 @@ test("RTCAudioSink should send ondata events when defined outside ontrack", (t) 
   // (the negotiation above runs at the same time) and failed about half the
   // time on both M106 and M155.
   const frames = 10;
-  const finish = () => {
+  let interval = null;
+  let timeout = null;
+  let sink = null;
+  function finish() {
     clearInterval(interval);
     clearTimeout(timeout);
     t.ok(
@@ -166,9 +169,9 @@ test("RTCAudioSink should send ondata events when defined outside ontrack", (t) 
     pcA.close();
     pcB.close();
     t.end();
-  };
+  }
 
-  const sink = new RTCAudioSink(track);
+  sink = new RTCAudioSink(track);
   sink.addEventListener("data", () => {
     ondataDidFired += 1;
     if (ondataDidFired === frames) {
@@ -182,13 +185,13 @@ test("RTCAudioSink should send ondata events when defined outside ontrack", (t) 
     samples[n] = Math.random() * 0xffff;
   }
   let sent = 0;
-  const interval = setInterval(() => {
+  interval = setInterval(() => {
     if (sent < frames) {
       source.onData({ samples, sampleRate });
       sent += 1;
     }
   }, 10);
-  const timeout = setTimeout(finish, 5000);
+  timeout = setTimeout(finish, 5000);
 });
 
 /**
