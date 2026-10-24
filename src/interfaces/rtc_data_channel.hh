@@ -46,11 +46,6 @@ public:
   // browser, even when the native channel is already open; "open" follows.
   void StartAsLocal();
 
-  // A channel the remote side opened is announced already "open" (its
-  // "datachannel" event sees readyState "open"), as the spec requires, even if
-  // the native state has not caught up when the wrapper is made.
-  void StartAsRemote();
-
   //
   // DataChannelObserver implementation.
   //
@@ -115,8 +110,12 @@ private:
   // send() queues data and shrinks when libwebrtc reports it sent (as a task),
   // like blink does; readyState follows the events delivered to JS. Neither
   // getter has to wait on a libwebrtc thread.
+  // bufferedAmount once the native channel is gone.
   uint64_t _buffered_amount = 0;
   uint64_t _buffered_amount_low_threshold = 0;
+  // Set by a send() that takes bufferedAmount above the threshold; the next
+  // OnBufferedAmountChange that finds it at or below fires bufferedamountlow.
+  bool _low_armed = false;
   webrtc::DataChannelInterface::DataState _ready_state =
       webrtc::DataChannelInterface::kConnecting;
   bool _open_dispatched = false;

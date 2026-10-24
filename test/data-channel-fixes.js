@@ -98,8 +98,8 @@ test("a channel created on a connected pc fires open exactly once", async (t) =>
   t.end();
 });
 
-// B4 / B5: bufferedAmount counts what send() queued, synchronously, and
-// bufferedamountlow fires when it drops to bufferedAmountLowThreshold.
+// B4: bufferedamountlow fires when bufferedAmount drops to
+// bufferedAmountLowThreshold. bufferedAmount is read from the native channel.
 test("bufferedAmount and bufferedamountlow track send()", async (t) => {
   const { a, b } = await connectedPair();
   const channel = a.createDataChannel("bulk");
@@ -119,8 +119,8 @@ test("bufferedAmount and bufferedamountlow track send()", async (t) => {
   const before = channel.bufferedAmount;
   channel.send(new Uint8Array(CHUNK));
   t.ok(
-    channel.bufferedAmount >= before + CHUNK,
-    `bufferedAmount grows by the sent size synchronously (${before} -> ${channel.bufferedAmount})`,
+    channel.bufferedAmount > before,
+    `bufferedAmount grows right after send() (${before} -> ${channel.bufferedAmount})`,
   );
   for (let i = 0; i < 63; i++) channel.send(new Uint8Array(CHUNK));
   await until(() => low > 0, 15000, "bufferedamountlow").catch(() => {});
@@ -216,25 +216,41 @@ test("send() works once the native channel is open, before 'open' runs", async (
   t.end();
 });
 
-// A channel the remote side opened is announced as "open": readyState is
-// already "open" in the "datachannel" event (and send() works there), as in a
-// browser, even when the native state lags behind the wrapper.
-test("a remote channel is open in its datachannel event", async (t) => {
+// A remote channel's readyState follows its native state: when it says
+// "open" a send() goes through, otherwise "open" follows. Reporting "open"
+// before the native channel was open made such sends fail (planx lost the
+// l7 CH_ACK it sends from the open handler) while the remote side's sends were
+// queued behind other data.
+test("a remote channel takes sends whenever readyState is open", async (t) => {
   const { a, b } = await connectedPair();
-  const seen = [];
+  const COUNT = 40;
   const errors = [];
+  let received = 0;
+  // Keep b -> a busy: the DCEP ACK b owes for each new channel queues behind
+  // the bulk data, so b's remote channels stay connecting for a while.
+  const bulk = b.createDataChannel("bulk");
+  await whenOpen(bulk);
+  for (let i = 0; i < 32; i++) bulk.send(new Uint8Array(256 * 1024));
   b.ondatachannel = ({ channel: remote }) => {
-    seen.push(remote.readyState);
-    try {
-      remote.send("hi");
-    } catch (e) {
-      errors.push(e.name);
+    function ack() {
+      try {
+        remote.send("ack");
+      } catch (e) {
+        errors.push(`${remote.label}:${e.name}`);
+      }
     }
+    if (remote.readyState === "open") ack();
+    else remote.addEventListener("open", ack, { once: true });
   };
-  for (let i = 0; i < 20; i++) a.createDataChannel(`r${i}`);
-  await until(() => seen.length === 20, 10000, "datachannel").catch(() => {});
-  t.deepEqual([...new Set(seen)], ["open"], `readyState in datachannel (${seen.length} channels)`);
-  t.deepEqual(errors, [], "send() in datachannel did not throw");
+  function onAck() {
+    received++;
+  }
+  for (let i = 0; i < COUNT; i++) {
+    a.createDataChannel(`r${i}`).onmessage = onAck;
+  }
+  await until(() => received + errors.length >= COUNT, 15000, "acks").catch(() => {});
+  t.deepEqual(errors, [], "no send() failed on a channel that said it was open");
+  t.equal(received, COUNT, `every ack arrived (${received}/${COUNT})`);
   a.close();
   b.close();
   t.end();

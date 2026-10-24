@@ -134,12 +134,6 @@ void RTCDataChannel::StartAsLocal() {
   }
 }
 
-void RTCDataChannel::StartAsRemote() {
-  if (_ready_state == webrtc::DataChannelInterface::kConnecting) {
-    _ready_state = webrtc::DataChannelInterface::kOpen;
-  }
-}
-
 void RTCDataChannel::DispatchInOrder(
     std::unique_ptr<Event<RTCDataChannel>> event) {
   std::lock_guard<std::mutex> lock(_adopt_mutex);
@@ -157,6 +151,7 @@ void RTCDataChannel::CleanupInternals() {
     return;
   }
   _jingleDataChannel->UnregisterObserver();
+  _buffered_amount = _jingleDataChannel->buffered_amount();
   _cached_id = _jingleDataChannel->id();
   _cached_label = _jingleDataChannel->label();
   _cached_max_packet_life_time = static_cast<uint16_t>(
@@ -227,13 +222,14 @@ void RTCDataChannel::OnMessage(const webrtc::DataBuffer &buffer) {
       [this, buffer]() { RTCDataChannel::HandleMessage(*this, buffer); }));
 }
 
-void RTCDataChannel::OnBufferedAmountChange(uint64_t sent_data_size) {
-  DispatchInOrder(CreateCallback<RTCDataChannel>([this, sent_data_size]() {
-    auto previous = _buffered_amount;
-    _buffered_amount =
-        previous > sent_data_size ? previous - sent_data_size : 0;
-    if (previous > _buffered_amount_low_threshold &&
-        _buffered_amount <= _buffered_amount_low_threshold) {
+void RTCDataChannel::OnBufferedAmountChange(uint64_t /* sent_data_size */) {
+  DispatchInOrder(CreateCallback<RTCDataChannel>([this]() {
+    if (!_low_armed || _jingleDataChannel == nullptr) {
+      return;
+    }
+    if (_jingleDataChannel->buffered_amount() <=
+        _buffered_amount_low_threshold) {
+      _low_armed = false;
       auto env = Env();
       Napi::HandleScope scope(env);
       auto object = Napi::Object::New(env);
@@ -327,17 +323,18 @@ Napi::Value RTCDataChannel::Send(const Napi::CallbackInfo &info) {
   // libwebrtc closes the channel abruptly when its send queue overflows, which
   // also drops the message. Refuse up front, like blink does.
   auto size = static_cast<uint64_t>(buffer->size());
-  if (_buffered_amount + size >
-      webrtc::DataChannelInterface::MaxSendQueueSize()) {
+  auto queued = _jingleDataChannel->buffered_amount();
+  if (queued + size > webrtc::DataChannelInterface::MaxSendQueueSize()) {
     Napi::Error(env, ErrorFactory::CreateOperationError(
                          env, "RTCDataChannel send queue is full"))
         .ThrowAsJavaScriptException();
     return env.Undefined();
   }
 
-  _buffered_amount += size;
+  if (queued + size > _buffered_amount_low_threshold) {
+    _low_armed = true;
+  }
   if (!_jingleDataChannel->Send(*buffer)) {
-    _buffered_amount -= size;
     if (_jingleDataChannel->state() !=
         webrtc::DataChannelInterface::DataState::kOpen) {
       Napi::Error(env, ErrorFactory::CreateInvalidStateError(
@@ -365,8 +362,15 @@ Napi::Value RTCDataChannel::Close(const Napi::CallbackInfo &info) {
   return info.Env().Undefined();
 }
 
+// Read from the native channel, not tracked here: libwebrtc only reports
+// decreases in 100 KiB steps or at zero, and skips the report while control
+// messages (DCEP OPEN / ACK) are queued, so a tracked value could stay above
+// zero after the data has left.
 Napi::Value RTCDataChannel::GetBufferedAmount(const Napi::CallbackInfo &info) {
-  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), _buffered_amount, result,
+  auto amount = _jingleDataChannel != nullptr
+                    ? _jingleDataChannel->buffered_amount()
+                    : _buffered_amount;
+  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), amount, result,
                                    Napi::Value)
   return result;
 }

@@ -262,7 +262,6 @@ void RTCPeerConnection::OnDataChannel(
     }
     auto channel =
         _data_channel_wrap.GetOrCreate(observer, observer->channel());
-    channel->StartAsRemote();
     MakeCallback("ondatachannel", {channel->Value()});
   }));
 }
