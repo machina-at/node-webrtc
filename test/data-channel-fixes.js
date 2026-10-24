@@ -1,6 +1,7 @@
 "use strict";
 
 const test = require("tape");
+const { RTCPeerConnection } = require("..");
 const { connectedPair, until, whenOpen } = require("./lib/pair");
 
 // B1: messages that arrive while a remote channel is being handed from its
@@ -152,6 +153,57 @@ test("send() throws instead of dropping when the send queue is full", async (t) 
   t.equal(error && error.name, "OperationError", `it is an OperationError (${error && error.name})`);
   await until(() => received === sent, 30000, "delivery").catch(() => {});
   t.equal(received, sent, `every send() that returned was delivered (${received}/${sent})`);
+  a.close();
+  b.close();
+  t.end();
+});
+
+// readyState follows the "open" event, but send() must not refuse a channel
+// whose native side is already open while that event is still queued (the
+// remote may already be using it). Blocking the JS thread lets the native
+// channel open while its "open" event cannot run.
+test("send() works once the native channel is open, before 'open' runs", async (t) => {
+  const a = new RTCPeerConnection();
+  const b = new RTCPeerConnection();
+  function gathered(pc) {
+    const found = [];
+    return new Promise((resolve) => {
+      pc.onicecandidate = (e) => (e.candidate ? found.push(e.candidate) : resolve(found));
+    });
+  }
+  let received = null;
+  b.ondatachannel = ({ channel: remote }) => {
+    remote.onmessage = ({ data }) => {
+      received = data;
+    };
+  };
+  const channel = a.createDataChannel("early");
+  const fromA = gathered(a);
+  const fromB = gathered(b);
+  await a.setLocalDescription(await a.createOffer());
+  await b.setRemoteDescription(a.localDescription);
+  await b.setLocalDescription(await b.createAnswer());
+  await a.setRemoteDescription(b.localDescription);
+  const [candidatesA, candidatesB] = await Promise.all([fromA, fromB]);
+  // addIceCandidate runs on the JS event loop: wait for every candidate to be
+  // applied, then block right away so ICE / DTLS / SCTP and the channel's
+  // opening all happen natively while "open" cannot be dispatched.
+  await Promise.all([
+    ...candidatesA.map((c) => b.addIceCandidate(c).catch(() => {})),
+    ...candidatesB.map((c) => a.addIceCandidate(c).catch(() => {})),
+  ]);
+  const stateBefore = channel.readyState;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
+  let error = null;
+  try {
+    channel.send("early");
+  } catch (e) {
+    error = e;
+  }
+  t.equal(stateBefore, "connecting", "the channel was still connecting before the JS thread blocked");
+  t.equal(error, null, `send() did not throw (readyState=${channel.readyState}, ${error && error.name})`);
+  await until(() => received === "early", 10000, "delivery").catch(() => {});
+  t.equal(received, "early", "the message arrived");
   a.close();
   b.close();
   t.end();

@@ -81,11 +81,14 @@ test("setNetworkOptions({ ignoredInterfaces }) drops host candidates of those in
   before.close();
   nonstandard.setNetworkOptions({ ignoredInterfaces: names });
   try {
+    // A factory kept alive by an earlier peer connection only picks the list
+    // up at the network manager's next enumeration (every 2 s).
+    await new Promise((resolve) => setTimeout(resolve, 2500));
     const after = new RTCPeerConnection();
     const withNone = usesIgnored(await hostCandidates(after));
     after.close();
     t.ok(withAll.length > 0, `host candidates on those interfaces without the option (${withAll.length})`);
-    t.deepEqual(withNone, [], "none once they are ignored");
+    t.deepEqual(withNone, [], `none once they are ignored (${names.join(", ")})`);
   } finally {
     nonstandard.setNetworkOptions({ ignoredInterfaces: [] });
     // The network manager re-enumerates every 2 s; let the restored networks

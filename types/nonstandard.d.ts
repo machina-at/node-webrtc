@@ -89,8 +89,7 @@ export const RTCVideoSource: {
 export interface NetworkOptions {
   /**
    * Interface names whose networks gather no candidates (e.g. VM bridges), as
-   * os.networkInterfaces() reports them (on Windows the adapter GUID works
-   * too).
+   * os.networkInterfaces() reports them.
    */
   ignoredInterfaces?: string[];
   /**

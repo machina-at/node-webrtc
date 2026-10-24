@@ -55,11 +55,11 @@ template <typename F> static void ForEachAdapter(F visit) {
   for (int attempt = 0; attempt < 3; attempt++) {
     buffer.resize(size);
     auto *first = reinterpret_cast<IP_ADAPTER_ADDRESSES *>(buffer.data());
-    auto ret = GetAdaptersAddresses(AF_UNSPEC,
-                                    GAA_FLAG_SKIP_ANYCAST |
-                                        GAA_FLAG_SKIP_MULTICAST |
-                                        GAA_FLAG_SKIP_DNS_SERVER,
-                                    nullptr, first, &size);
+    auto ret = GetAdaptersAddresses(
+        AF_UNSPEC,
+        GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_SKIP_ANYCAST |
+            GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_INCLUDE_PREFIX,
+        nullptr, first, &size);
     if (ret == ERROR_BUFFER_OVERFLOW) {
       continue;
     }
@@ -89,18 +89,24 @@ static std::string ToUtf8(const wchar_t *text) {
 }
 #endif
 
-// libwebrtc names a Windows network after its adapter GUID (AdapterName),
-// while Node's os.networkInterfaces() reports the friendly name; accept both.
+// A release build of libwebrtc names a Windows network after the adapter's
+// position among the adapters that are up ("0", "1", ...; the friendly name
+// only in debug builds), walking GetAdaptersAddresses with the same flags as
+// here. Node's os.networkInterfaces() reports the friendly name; map it.
 static std::vector<std::string>
 ExpandInterfaceNames(const std::vector<std::string> &names) {
   std::vector<std::string> out = names;
 #if defined(_WIN32)
+  int position = 0;
   ForEachAdapter([&](IP_ADAPTER_ADDRESSES *adapter) {
-    auto friendly = ToUtf8(adapter->FriendlyName);
-    if (std::find(names.begin(), names.end(), friendly) != names.end() &&
-        adapter->AdapterName != nullptr) {
-      out.emplace_back(adapter->AdapterName);
+    if (adapter->OperStatus != IfOperStatusUp) {
+      return;
     }
+    auto friendly = ToUtf8(adapter->FriendlyName);
+    if (std::find(names.begin(), names.end(), friendly) != names.end()) {
+      out.emplace_back(std::to_string(position));
+    }
+    position++;
   });
 #endif
   return out;

@@ -263,8 +263,12 @@ void RTCDataChannel::HandleMessage(RTCDataChannel &channel,
 
 Napi::Value RTCDataChannel::Send(const Napi::CallbackInfo &info) {
   auto env = info.Env();
+  // The cached state lags the native one until the "open" event runs; a
+  // channel the remote side already uses (its "datachannel" fired) must be
+  // writable, so ask the native channel only when the cache says otherwise.
   if (_jingleDataChannel == nullptr ||
-      _ready_state != webrtc::DataChannelInterface::kOpen) {
+      (_ready_state != webrtc::DataChannelInterface::kOpen &&
+       _jingleDataChannel->state() != webrtc::DataChannelInterface::kOpen)) {
     Napi::Error(env, ErrorFactory::CreateInvalidStateError(
                          env, "RTCDataChannel.readyState is not 'open'"))
         .ThrowAsJavaScriptException();
