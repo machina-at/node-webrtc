@@ -127,6 +127,13 @@ RTCDataChannel::RTCDataChannel(const Napi::CallbackInfo &info)
   _cached_ordered = false;
 }
 
+void RTCDataChannel::StartAsLocal() {
+  if (_ready_state == webrtc::DataChannelInterface::kOpen &&
+      !_open_dispatched) {
+    _ready_state = webrtc::DataChannelInterface::kConnecting;
+  }
+}
+
 void RTCDataChannel::DispatchInOrder(
     std::unique_ptr<Event<RTCDataChannel>> event) {
   std::lock_guard<std::mutex> lock(_adopt_mutex);

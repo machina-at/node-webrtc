@@ -659,6 +659,7 @@ RTCPeerConnection::CreateDataChannel(const Napi::CallbackInfo &info) {
   auto observer = new DataChannelObserver(_factory, dataChannel);
   auto channel =
       _data_channel_wrap.GetOrCreate(observer, observer->channel()); // NOLINT
+  channel->StartAsLocal();
   _channels.emplace_back(channel);
 
   return channel->Value();

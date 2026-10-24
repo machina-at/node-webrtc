@@ -76,16 +76,23 @@ test("connectionstatechange fires once per connectionState change", async (t) =>
 
 // B8: a channel created on an established SCTP association is open at once;
 // the transition happened before any observer was registered, so "open" never
-// fired.
+// fired (and readyState was already "open" when createDataChannel returned).
 test("a channel created on a connected pc fires open exactly once", async (t) => {
   const { a, b } = await connectedPair();
   b.ondatachannel = () => {};
   const channel = a.createDataChannel("late");
+  const initial = channel.readyState;
   let opened = 0;
-  channel.onopen = () => opened++;
+  let stateAtOpen = null;
+  channel.onopen = () => {
+    opened++;
+    stateAtOpen = channel.readyState;
+  };
   await until(() => opened > 0, 5000, "open").catch(() => {});
   await new Promise((resolve) => setTimeout(resolve, 300));
+  t.equal(initial, "connecting", "it starts connecting, as in a browser");
   t.equal(opened, 1, `open fired once (readyState=${channel.readyState})`);
+  t.equal(stateAtOpen, "open", "readyState is open when open fires");
   a.close();
   b.close();
   t.end();

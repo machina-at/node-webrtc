@@ -42,6 +42,10 @@ public:
 
   static void Init(Napi::Env, Napi::Object);
 
+  // createDataChannel() hands out a channel that starts "connecting", as in a
+  // browser, even when the native channel is already open; "open" follows.
+  void StartAsLocal();
+
   //
   // DataChannelObserver implementation.
   //
