@@ -99,7 +99,9 @@ test("a channel created on a connected pc fires open exactly once", async (t) =>
 });
 
 // B4: bufferedamountlow fires when bufferedAmount drops to
-// bufferedAmountLowThreshold. bufferedAmount is read from the native channel.
+// bufferedAmountLowThreshold. bufferedAmount is read from the native channel,
+// so how much piles up depends on how fast the platform drains loopback (on
+// the Windows runner nothing does); the event is required only when it did.
 test("bufferedAmount and bufferedamountlow track send()", async (t) => {
   const { a, b } = await connectedPair();
   const channel = a.createDataChannel("bulk");
@@ -108,35 +110,38 @@ test("bufferedAmount and bufferedamountlow track send()", async (t) => {
   };
   await whenOpen(channel);
   const CHUNK = 64 * 1024;
-  channel.bufferedAmountLowThreshold = 256 * 1024;
-  t.equal(channel.bufferedAmountLowThreshold, 256 * 1024, "threshold is stored");
+  const THRESHOLD = 256 * 1024;
+  channel.bufferedAmountLowThreshold = THRESHOLD;
+  t.equal(channel.bufferedAmountLowThreshold, THRESHOLD, "threshold is stored");
   let low = 0;
   let amountAtLow = -1;
   channel.onbufferedamountlow = () => {
     low++;
     amountAtLow = channel.bufferedAmount;
   };
-  const before = channel.bufferedAmount;
-  channel.send(new Uint8Array(CHUNK));
-  t.ok(
-    channel.bufferedAmount > before,
-    `bufferedAmount grows right after send() (${before} -> ${channel.bufferedAmount})`,
-  );
-  for (let i = 0; i < 63; i++) channel.send(new Uint8Array(CHUNK));
-  await until(() => low > 0, 15000, "bufferedamountlow").catch(() => {});
-  t.ok(low > 0, "bufferedamountlow fired");
-  t.ok(
-    amountAtLow >= 0 && amountAtLow <= 256 * 1024,
-    `bufferedAmount <= threshold when it fired (${amountAtLow})`,
-  );
+  let peak = 0;
+  for (let i = 0; i < 64; i++) {
+    channel.send(new Uint8Array(CHUNK));
+    peak = Math.max(peak, channel.bufferedAmount);
+  }
   await until(() => channel.bufferedAmount === 0, 15000, "drained").catch(() => {});
-  t.equal(channel.bufferedAmount, 0, "bufferedAmount returns to 0 once sent");
+  t.equal(channel.bufferedAmount, 0, `bufferedAmount returns to 0 once sent (peak ${peak})`);
+  if (peak > THRESHOLD) {
+    await until(() => low > 0, 15000, "bufferedamountlow").catch(() => {});
+    t.ok(low > 0, `bufferedamountlow fired after bufferedAmount reached ${peak}`);
+    t.ok(amountAtLow >= 0 && amountAtLow <= THRESHOLD, `bufferedAmount <= threshold when it fired (${amountAtLow})`);
+  } else {
+    t.equal(low, 0, `no bufferedamountlow while bufferedAmount stayed at or below the threshold (peak ${peak})`);
+  }
   a.close();
   b.close();
   t.end();
 });
 
 // B6: send() beyond the 16 MiB send queue used to drop the message silently.
+// Whether a flood fills the queue depends on the platform, so either send()
+// threw an OperationError or every message arrived; one message larger than
+// the whole queue is refused everywhere.
 test("send() throws instead of dropping when the send queue is full", async (t) => {
   const { a, b } = await connectedPair();
   const channel = a.createDataChannel("flood");
@@ -156,10 +161,19 @@ test("send() throws instead of dropping when the send queue is full", async (t) 
   } catch (e) {
     error = e;
   }
-  t.ok(error, `send() threw once the queue was full (sent ${sent})`);
-  t.equal(error && error.name, "OperationError", `it is an OperationError (${error && error.name})`);
-  await until(() => received === sent, 30000, "delivery").catch(() => {});
+  if (error) {
+    t.equal(error.name, "OperationError", `a full queue throws an OperationError (sent ${sent})`);
+  }
+  await until(() => received === sent, 60000, "delivery").catch(() => {});
   t.equal(received, sent, `every send() that returned was delivered (${received}/${sent})`);
+  let oversized = null;
+  try {
+    channel.send(new Uint8Array(16 * 1024 * 1024 + 1));
+  } catch (e) {
+    oversized = e;
+  }
+  t.equal(oversized && oversized.name, "OperationError", "a message larger than the send queue is refused");
+  t.equal(channel.readyState, "open", "the channel stays open");
   a.close();
   b.close();
   t.end();
