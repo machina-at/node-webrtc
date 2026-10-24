@@ -10,12 +10,17 @@
 #include <cstdlib>
 #include <cstring>
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#else
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #endif
+#include <algorithm>
 
 #include <webrtc/rtc_base/ip_address.h>
 #include <webrtc/rtc_base/network.h>
@@ -26,32 +31,6 @@
 
 namespace node_webrtc {
 
-NetworkOptions &NetworkOptions::Instance() {
-  static auto *instance = new NetworkOptions();
-  return *instance;
-}
-
-void NetworkOptions::ApplyTo(PeerConnectionFactory *factory) {
-  if (factory == nullptr) {
-    return;
-  }
-  std::vector<std::string> ignored;
-  bool bind = false;
-  {
-    std::lock_guard<std::mutex> lock(_mutex);
-    ignored = _ignored_interfaces;
-    bind = _bind_sockets_to_interface;
-  }
-  auto *network_manager =
-      static_cast<webrtc::BasicNetworkManager *>(factory->getNetworkManager());
-  factory->WorkerThread()->BlockingCall([&]() {
-    network_manager->set_network_ignore_list(ignored);
-    factory->WorkerThread()->socketserver()->set_network_binder(
-        bind ? this : nullptr);
-  });
-}
-
-#if !defined(_WIN32)
 static bool SameAddress(const sockaddr *addr, const webrtc::IPAddress &ip) {
   if (addr == nullptr) {
     return false;
@@ -68,28 +47,120 @@ static bool SameAddress(const sockaddr *addr, const webrtc::IPAddress &ip) {
   }
   return false;
 }
+
+#if defined(_WIN32)
+template <typename F> static void ForEachAdapter(F visit) {
+  ULONG size = 16 * 1024;
+  std::vector<unsigned char> buffer;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    buffer.resize(size);
+    auto *first = reinterpret_cast<IP_ADAPTER_ADDRESSES *>(buffer.data());
+    auto ret = GetAdaptersAddresses(AF_UNSPEC,
+                                    GAA_FLAG_SKIP_ANYCAST |
+                                        GAA_FLAG_SKIP_MULTICAST |
+                                        GAA_FLAG_SKIP_DNS_SERVER,
+                                    nullptr, first, &size);
+    if (ret == ERROR_BUFFER_OVERFLOW) {
+      continue;
+    }
+    if (ret != NO_ERROR) {
+      return;
+    }
+    for (auto *adapter = first; adapter != nullptr; adapter = adapter->Next) {
+      visit(adapter);
+    }
+    return;
+  }
+}
+
+static std::string ToUtf8(const wchar_t *text) {
+  if (text == nullptr) {
+    return {};
+  }
+  int length = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr,
+                                   nullptr);
+  if (length <= 1) {
+    return {};
+  }
+  std::string out(static_cast<size_t>(length - 1), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, text, -1, out.data(), length, nullptr,
+                      nullptr);
+  return out;
+}
 #endif
 
-webrtc::NetworkBindingResult
-NetworkOptions::BindSocketToNetwork(int socket_fd,
-                                    const webrtc::IPAddress &address) {
+// libwebrtc names a Windows network after its adapter GUID (AdapterName),
+// while Node's os.networkInterfaces() reports the friendly name; accept both.
+static std::vector<std::string>
+ExpandInterfaceNames(const std::vector<std::string> &names) {
+  std::vector<std::string> out = names;
 #if defined(_WIN32)
-  (void)socket_fd;
-  (void)address;
-  return webrtc::NetworkBindingResult::NOT_IMPLEMENTED;
+  ForEachAdapter([&](IP_ADAPTER_ADDRESSES *adapter) {
+    auto friendly = ToUtf8(adapter->FriendlyName);
+    if (std::find(names.begin(), names.end(), friendly) != names.end() &&
+        adapter->AdapterName != nullptr) {
+      out.emplace_back(adapter->AdapterName);
+    }
+  });
+#endif
+  return out;
+}
+
+NetworkOptions &NetworkOptions::Instance() {
+  static auto *instance = new NetworkOptions();
+  return *instance;
+}
+
+void NetworkOptions::ApplyTo(PeerConnectionFactory *factory) {
+  if (factory == nullptr) {
+    return;
+  }
+  std::vector<std::string> ignored;
+  bool bind = false;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    ignored = ExpandInterfaceNames(_ignored_interfaces);
+    bind = _bind_sockets_to_interface;
+  }
+  auto *network_manager =
+      static_cast<webrtc::BasicNetworkManager *>(factory->getNetworkManager());
+  factory->WorkerThread()->BlockingCall([&]() {
+    network_manager->set_network_ignore_list(ignored);
+    factory->WorkerThread()->socketserver()->set_network_binder(
+        bind ? this : nullptr);
+  });
+}
+
+
+#if defined(_WIN32)
+static int PinSocket(int socket_fd, const webrtc::IPAddress &address) {
+  int result = -1;
+  bool found = false;
+  ForEachAdapter([&](IP_ADAPTER_ADDRESSES *adapter) {
+    for (auto *unicast = adapter->FirstUnicastAddress;
+         !found && unicast != nullptr; unicast = unicast->Next) {
+      if (!SameAddress(unicast->Address.lpSockaddr, address)) {
+        continue;
+      }
+      found = true;
+      auto socket = static_cast<SOCKET>(socket_fd);
+      if (address.family() == AF_INET6) {
+        DWORD index = adapter->Ipv6IfIndex;
+        result = setsockopt(socket, IPPROTO_IPV6, IPV6_UNICAST_IF,
+                            reinterpret_cast<const char *>(&index),
+                            sizeof(index));
+      } else {
+        DWORD index = htonl(adapter->IfIndex);
+        result = setsockopt(socket, IPPROTO_IP, IP_UNICAST_IF,
+                            reinterpret_cast<const char *>(&index),
+                            sizeof(index));
+      }
+    }
+  });
+  return result;
+}
 #else
-  if (address.IsNil() || webrtc::IPIsAny(address)) {
-    return webrtc::NetworkBindingResult::NOT_IMPLEMENTED;
-  }
-  _bind_calls++;
-  // Any result but SUCCESS / NOT_IMPLEMENTED fails PhysicalSocket::Bind, and
-  // the port allocator then retries every port in the range (tens of
-  // thousands of attempts per socket). When a socket cannot be pinned (e.g.
-  // SO_BINDTODEVICE without the capability), fall back to the plain bind().
-  if (std::getenv("NODE_WEBRTC_TEST_BIND_FAIL") != nullptr) {
-    _bind_failed++;
-    return webrtc::NetworkBindingResult::NOT_IMPLEMENTED;
-  }
+static int PinSocket(int socket_fd, const webrtc::IPAddress &address) {
   std::string name;
   ifaddrs *addrs = nullptr;
   if (getifaddrs(&addrs) == 0) {
@@ -102,30 +173,45 @@ NetworkOptions::BindSocketToNetwork(int socket_fd,
     freeifaddrs(addrs);
   }
   if (name.empty()) {
-    _bind_failed++;
-    return webrtc::NetworkBindingResult::NOT_IMPLEMENTED;
+    return -1;
   }
-  int result = -1;
 #if defined(__APPLE__)
   unsigned int index = if_nametoindex(name.c_str());
-  if (index != 0) {
-    result = address.family() == AF_INET6
-                 ? setsockopt(socket_fd, IPPROTO_IPV6, IPV6_BOUND_IF, &index,
-                              sizeof(index))
-                 : setsockopt(socket_fd, IPPROTO_IP, IP_BOUND_IF, &index,
-                              sizeof(index));
+  if (index == 0) {
+    return -1;
   }
+  return address.family() == AF_INET6
+             ? setsockopt(socket_fd, IPPROTO_IPV6, IPV6_BOUND_IF, &index,
+                          sizeof(index))
+             : setsockopt(socket_fd, IPPROTO_IP, IP_BOUND_IF, &index,
+                          sizeof(index));
 #elif defined(__linux__)
-  result = setsockopt(socket_fd, SOL_SOCKET, SO_BINDTODEVICE, name.c_str(),
-                      static_cast<socklen_t>(name.size()));
+  return setsockopt(socket_fd, SOL_SOCKET, SO_BINDTODEVICE, name.c_str(),
+                    static_cast<socklen_t>(name.size()));
+#else
+  return -1;
 #endif
-  if (result != 0) {
+}
+#endif
+
+webrtc::NetworkBindingResult
+NetworkOptions::BindSocketToNetwork(int socket_fd,
+                                    const webrtc::IPAddress &address) {
+  if (address.IsNil() || webrtc::IPIsAny(address)) {
+    return webrtc::NetworkBindingResult::NOT_IMPLEMENTED;
+  }
+  _bind_calls++;
+  // Any result but SUCCESS / NOT_IMPLEMENTED fails PhysicalSocket::Bind, and
+  // the port allocator then retries every port in the range (tens of
+  // thousands of attempts per socket). When a socket cannot be pinned (e.g.
+  // SO_BINDTODEVICE without the capability), fall back to the plain bind().
+  if (std::getenv("NODE_WEBRTC_TEST_BIND_FAIL") != nullptr ||
+      PinSocket(socket_fd, address) != 0) {
     _bind_failed++;
     return webrtc::NetworkBindingResult::NOT_IMPLEMENTED;
   }
   _bind_succeeded++;
   return webrtc::NetworkBindingResult::SUCCESS;
-#endif
 }
 
 Napi::Value NetworkOptions::SetNetworkOptions(const Napi::CallbackInfo &info) {

@@ -28,9 +28,9 @@ class PeerConnectionFactory;
  *   candidates are gathered on them), e.g. VM bridges.
  * - bindSocketsToInterface: every socket libwebrtc binds to a local address is
  *   also pinned to the interface that owns that address (IP_BOUND_IF on
- *   macOS, SO_BINDTODEVICE on Linux), so its packets leave through that NIC
- *   whatever the routing table says (e.g. while a VPN / exit node captures the
- *   default route).
+ *   macOS, SO_BINDTODEVICE on Linux, IP_UNICAST_IF on Windows), so its
+ *   packets leave through that NIC whatever the routing table says (e.g.
+ *   while a VPN / exit node captures the default route).
  */
 class NetworkOptions : public webrtc::NetworkBinderInterface {
 public:
