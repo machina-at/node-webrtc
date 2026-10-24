@@ -114,6 +114,20 @@ export interface NetworkBindingStats {
 export const getNetworkBindingStats: () => NetworkBindingStats;
 
 /**
+ * Opens a TCP connection whose socket is pinned to `interfaceName` before
+ * connect() (IP_BOUND_IF on macOS, SO_BINDTODEVICE on Linux) and resolves with
+ * the connected, non-blocking fd, for `new net.Socket({ fd })`. Rejects
+ * without connecting when the socket cannot be pinned. `address` must be an IP
+ * literal; `timeoutMs` defaults to 10000. Not supported on Windows.
+ */
+export const connectBound: (
+  address: string,
+  port: number,
+  interfaceName: string,
+  timeoutMs?: number,
+) => Promise<number>;
+
+/**
  * Non-standard RTCConfiguration members (milliseconds). Unset keeps
  * libwebrtc's defaults.
  */

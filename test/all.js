@@ -19,6 +19,7 @@ require("./iceservers");
 require("./mediastream");
 require("./multiconnect"); // Seems a little slow...
 require("./network-and-config");
+require("./connect-bound");
 require("./constructor-failure");
 require("./pass-interface-to-method");
 require("./remote-data-channel-gc");
