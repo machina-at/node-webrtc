@@ -27,6 +27,8 @@
 #include "src/methods/get_display_media.hh"
 #include "src/methods/get_user_media.hh"
 #include "src/methods/i420_helpers.hh"
+#include "src/methods/connect_bound.hh"
+#include "src/methods/network_options.hh"
 #include "src/node/error_factory.hh"
 
 #ifdef DEBUG
@@ -40,6 +42,8 @@ static Napi::Object Init(Napi::Env env, Napi::Object exports) {
   node_webrtc::GetDisplayMedia::Init(env, exports);
   node_webrtc::GetUserMedia::Init(env, exports);
   node_webrtc::I420Helpers::Init(env, exports);
+  node_webrtc::NetworkOptions::Init(env, exports);
+  node_webrtc::ConnectBound::Init(env, exports);
   node_webrtc::MediaStream::Init(env, exports);
   node_webrtc::MediaStreamTrack::Init(env, exports);
   node_webrtc::PeerConnectionFactory::Init(env, exports);

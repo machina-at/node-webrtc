@@ -8,6 +8,7 @@
 #pragma once
 
 #include <mutex>
+#include <optional>
 
 #include <node-addon-api/napi.h>
 #include <webrtc/api/scoped_refptr.h>
@@ -36,7 +37,7 @@ public:
   static void Init(Napi::Env, Napi::Object);
 
   static ::node_webrtc::Wrap<RTCSctpTransport *,
-                             rtc::scoped_refptr<webrtc::SctpTransportInterface>,
+                             webrtc::scoped_refptr<webrtc::SctpTransportInterface>,
                              PeerConnectionFactory *> *
   wrap();
 
@@ -50,18 +51,25 @@ private:
 
   static RTCSctpTransport *
   Create(PeerConnectionFactory *,
-         rtc::scoped_refptr<webrtc::SctpTransportInterface>);
+         webrtc::scoped_refptr<webrtc::SctpTransportInterface>);
 
   Napi::Value GetTransport(const Napi::CallbackInfo &);
   Napi::Value GetState(const Napi::CallbackInfo &);
   Napi::Value GetMaxMessageSize(const Napi::CallbackInfo &);
   Napi::Value GetMaxChannels(const Napi::CallbackInfo &);
 
-  rtc::scoped_refptr<webrtc::DtlsTransportInterface> _dtls_transport;
+  webrtc::scoped_refptr<webrtc::DtlsTransportInterface> _dtls_transport;
   RefPtr<PeerConnectionFactory> _factory;
-  rtc::scoped_refptr<webrtc::SctpTransportInterface> _transport;
+  webrtc::scoped_refptr<webrtc::SctpTransportInterface> _transport;
 
   OwnedWrap<RTCDtlsTransport> _transport_wrap;
+
+  // Copied from SctpTransportInformation in the constructor and in
+  // OnStateChange(), so the getters do not wait on the network thread.
+  std::mutex _mutex;
+  webrtc::SctpTransportState _state = webrtc::SctpTransportState::kNew;
+  std::optional<double> _max_message_size;
+  std::optional<int> _max_channels;
 };
 
 } // namespace node_webrtc

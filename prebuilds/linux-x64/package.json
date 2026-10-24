@@ -1,10 +1,10 @@
 {
-  "name": "@roamhq/wrtc-linux-x64",
+  "name": "@10p.io/wrtc-linux-x64",
   "version": "0.10.0",
-  "description": "The Linux 64-bit binary for @roamhq/wrtc.",
+  "description": "The Linux 64-bit binary for @10p.io/wrtc.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/WonderInventions/node-webrtc.git"
+    "url": "git+https://github.com/machina-at/node-webrtc.git"
   },
   "license": "BSD-2-Clause",
   "os": [
@@ -12,5 +12,9 @@
   ],
   "cpu": [
     "x64"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }

@@ -84,17 +84,25 @@ async function negotiateRTCPeerConnections(options = {}) {
   }
 }
 
+// The "track" stats type was removed from libwebrtc. A local track is now
+// reported as a "media-source" (keyed by trackIdentifier), and what was sent
+// for it as the "outbound-rtp" stats that point at that media source.
 async function getLocalTrackStats(pc, track, check = () => true) {
   let stats;
   do {
-    const report = await pc.getStats();
-    stats = [...report.values()].find(
+    const report = [...(await pc.getStats()).values()];
+    const source = report.find(
       (stats) =>
-        stats.type === "track" &&
-        stats.trackIdentifier === track.id &&
-        !stats.remote &&
-        check(stats),
+        stats.type === "media-source" && stats.trackIdentifier === track.id,
     );
+    stats =
+      source &&
+      report.find(
+        (stats) =>
+          stats.type === "outbound-rtp" &&
+          stats.mediaSourceId === source.id &&
+          check(stats),
+      );
   } while (!stats);
   return stats;
 }

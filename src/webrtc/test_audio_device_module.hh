@@ -31,7 +31,7 @@ namespace node_webrtc {
 // TestAudioDeviceModule implements an AudioDevice module that can act both as a
 // capturer and a renderer. It will use 10ms audio frames.
 class TestAudioDeviceModule
-    : public rtc::RefCountedObject<webrtc::AudioDeviceModule> {
+    : public webrtc::RefCountedObject<webrtc::AudioDeviceModule> {
 public:
   TestAudioDeviceModule() = default;
   TestAudioDeviceModule(const TestAudioDeviceModule &) = delete;
@@ -51,7 +51,7 @@ public:
   // |renderer| is an object that receives audio data that would have been
   // played out. Can be nullptr if this device is never used for playing.
   // Use one of the Create... functions to get these instances.
-  static rtc::scoped_refptr<TestAudioDeviceModule> CreateTestAudioDeviceModule(
+  static webrtc::scoped_refptr<TestAudioDeviceModule> CreateTestAudioDeviceModule(
       std::unique_ptr<webrtc::TestAudioDeviceModule::Capturer> capturer,
       std::unique_ptr<webrtc::TestAudioDeviceModule::Renderer> renderer,
       float speed = 1);
@@ -81,11 +81,11 @@ public:
   // Blocks until the Renderer refuses to receive data.
   // Returns false if |timeout_ms| passes before that happens.
   virtual bool
-  WaitForPlayoutEnd(webrtc::TimeDelta timeout_ms = rtc::Event::kForever) = 0;
+  WaitForPlayoutEnd(webrtc::TimeDelta timeout_ms = webrtc::Event::kForever) = 0;
   // Blocks until the Recorder stops producing data.
   // Returns false if |timeout_ms| passes before that happens.
   virtual bool
-  WaitForRecordingEnd(webrtc::TimeDelta timeout_ms = rtc::Event::kForever) = 0;
+  WaitForRecordingEnd(webrtc::TimeDelta timeout_ms = webrtc::Event::kForever) = 0;
 };
 
 } // namespace node_webrtc

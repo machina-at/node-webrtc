@@ -138,11 +138,13 @@ tape(
         "every RTCRtpSender's .track is one of the MediaStreamTracks added",
       );
       return pc.createOffer().then(function (offer) {
+        // libwebrtc deduplicates stream ids (RtpSenderBase::set_stream_ids), so
+        // 2 unique streams per track and 2 tracks (audio + video) = 4 msid lines.
         t.equal(
           (offer.sdp.match(/a=msid:/g) || []).length,
-          6,
-          "even duplicates get added",
-        ); // 3 streams per track and 2 tracks (audio + video) = 6 msid lines
+          4,
+          "duplicate stream ids are added once",
+        );
         pc.close();
         t.end();
       });

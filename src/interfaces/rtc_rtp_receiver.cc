@@ -40,10 +40,11 @@ RTCRtpReceiver::RTCRtpReceiver(const Napi::CallbackInfo &info)
 
   // FIXME(mroberts): There is a safer conversion here.
   _factory = PeerConnectionFactory::Unwrap(info[0].ToObject());
-  auto receiver = *info[1]
-                       .As<Napi::External<
-                           rtc::scoped_refptr<webrtc::RtpReceiverInterface>>>()
-                       .Data();
+  auto receiver =
+      *info[1]
+           .As<Napi::External<
+               webrtc::scoped_refptr<webrtc::RtpReceiverInterface>>>()
+           .Data();
 
   _receiver = std::move(receiver);
 }
@@ -72,8 +73,8 @@ Napi::Value RTCRtpReceiver::GetCapabilities(const Napi::CallbackInfo &info) {
   CONVERT_ARGS_OR_THROW_AND_RETURN_NAPI(info, kindString, std::string)
   if (kindString == "audio" || kindString == "video") {
     auto factory = PeerConnectionFactory::GetOrCreateDefault();
-    auto kind = kindString == "audio" ? cricket::MEDIA_TYPE_AUDIO
-                                      : cricket::MEDIA_TYPE_VIDEO;
+    auto kind = kindString == "audio" ? webrtc::MediaType::AUDIO
+                                      : webrtc::MediaType::VIDEO;
     auto capabilities = factory->factory()->GetRtpReceiverCapabilities(kind);
     PeerConnectionFactory::Release();
     CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), capabilities, result,
@@ -127,25 +128,25 @@ Napi::Value RTCRtpReceiver::GetStats(const Napi::CallbackInfo &info) {
   return deferred.Promise();
 }
 
-Wrap<RTCRtpReceiver *, rtc::scoped_refptr<webrtc::RtpReceiverInterface>,
+Wrap<RTCRtpReceiver *, webrtc::scoped_refptr<webrtc::RtpReceiverInterface>,
      PeerConnectionFactory *> *
 RTCRtpReceiver::wrap() {
   static auto wrap =
       new node_webrtc::Wrap<RTCRtpReceiver *,
-                            rtc::scoped_refptr<webrtc::RtpReceiverInterface>,
+                            webrtc::scoped_refptr<webrtc::RtpReceiverInterface>,
                             PeerConnectionFactory *>(RTCRtpReceiver::Create);
   return wrap;
 }
 
 RTCRtpReceiver *RTCRtpReceiver::Create(
     PeerConnectionFactory *factory,
-    rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {
+    webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {
   auto env = constructor().Env();
   Napi::HandleScope scope(env);
 
   auto object = constructor().New(
       {factory->Value(),
-       Napi::External<rtc::scoped_refptr<webrtc::RtpReceiverInterface>>::New(
+       Napi::External<webrtc::scoped_refptr<webrtc::RtpReceiverInterface>>::New(
            env, &receiver)});
 
   auto unwrapped = Unwrap(object);

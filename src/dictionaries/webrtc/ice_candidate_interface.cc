@@ -67,19 +67,20 @@ TO_NAPI_IMPL(webrtc::IceCandidateInterface *, pair) {
   auto component = candidate.component() == 1 ? RTCIceComponent::kRtp
                                               : RTCIceComponent::kRtcp;
 
-  const auto &candidate_type = candidate.type();
   auto type = RTCIceCandidateType::kHost;
-  if (candidate_type == static_cast<const char *>(cricket::LOCAL_PORT_TYPE)) {
+  switch (candidate.type()) {
+  case webrtc::IceCandidateType::kHost:
     type = RTCIceCandidateType::kHost;
-  } else if (candidate_type ==
-             static_cast<const char *>(cricket::STUN_PORT_TYPE)) {
+    break;
+  case webrtc::IceCandidateType::kSrflx:
     type = RTCIceCandidateType::kSrflx;
-  } else if (candidate_type ==
-             static_cast<const char *>(cricket::RELAY_PORT_TYPE)) {
+    break;
+  case webrtc::IceCandidateType::kRelay:
     type = RTCIceCandidateType::kRelay;
-  } else if (candidate_type ==
-             static_cast<const char *>(cricket::PRFLX_PORT_TYPE)) {
+    break;
+  case webrtc::IceCandidateType::kPrflx:
     type = RTCIceCandidateType::kPrflx;
+    break;
   }
 
   NODE_WEBRTC_CREATE_OBJECT_OR_RETURN(env, object)

@@ -7,11 +7,15 @@
  */
 #include "peer_connection_factory.hh"
 
+#include "src/methods/network_options.hh"
+
 #include <memory>
 
+#include <webrtc/api/audio/create_audio_device_module.h>
 #include <webrtc/api/audio_codecs/builtin_audio_decoder_factory.h>
 #include <webrtc/api/audio_codecs/builtin_audio_encoder_factory.h>
 #include <webrtc/api/create_peerconnection_factory.h>
+#include <webrtc/api/environment/environment_factory.h>
 #include <webrtc/api/peer_connection_interface.h>
 #include <webrtc/api/video_codecs/builtin_video_decoder_factory.h>
 #include <webrtc/api/video_codecs/builtin_video_encoder_factory.h>
@@ -52,7 +56,9 @@ PeerConnectionFactory::PeerConnectionFactory(const Napi::CallbackInfo &info)
   // TODO(mroberts): Read `audioLayer` from some PeerConnectionFactoryOptions?
   auto audioLayer = MakeNothing<webrtc::AudioDeviceModule::AudioLayer>();
 
-  _workerThread = rtc::Thread::CreateWithSocketServer();
+  _environment = webrtc::CreateEnvironment();
+
+  _workerThread = webrtc::Thread::CreateWithSocketServer();
   assert(_workerThread);
 
   bool result =
@@ -64,23 +70,19 @@ PeerConnectionFactory::PeerConnectionFactory(const Napi::CallbackInfo &info)
   assert(result);
   (void)result;
 
-  _audioDeviceModule = _workerThread->BlockingCall([audioLayer]() {
+  _audioDeviceModule = _workerThread->BlockingCall([this, audioLayer]() {
     return audioLayer
-        .Map([](auto audioLayer) {
-          // TODO(mroberts): I'm just trying to get this to compile
-          // right now. We need to call something like
-          // CreateDefaultTaskQueueFactory(). This code is currently
-          // unused, though.
-          return webrtc::AudioDeviceModule::Create(audioLayer, nullptr);
+        .Map([this](auto audioLayer) {
+          return webrtc::CreateAudioDeviceModule(*_environment, audioLayer);
         })
-        .Or([]() {
+        .Or([]() -> webrtc::scoped_refptr<webrtc::AudioDeviceModule> {
           return TestAudioDeviceModule::CreateTestAudioDeviceModule(
               TestAudioDeviceModule::CreateZeroCapturer(48000, 1),
               TestAudioDeviceModule::CreateDiscardRenderer(48000));
         });
   });
 
-  _signalingThread = rtc::Thread::Create();
+  _signalingThread = webrtc::Thread::Create();
   assert(_signalingThread);
 
   result = _signalingThread->SetName("PeerConnectionFactory:signalingThread",
@@ -104,13 +106,16 @@ PeerConnectionFactory::PeerConnectionFactory(const Napi::CallbackInfo &info)
   options.network_ignore_mask = 0;
   _factory->SetOptions(options);
 
-  _networkManager = std::unique_ptr<rtc::NetworkManager>(
-      new rtc::BasicNetworkManager(_workerThread->socketserver()));
+  _networkManager =
+      std::unique_ptr<webrtc::NetworkManager>(new webrtc::BasicNetworkManager(
+          *_environment, _workerThread->socketserver()));
   assert(_networkManager != nullptr);
 
-  _socketFactory = std::unique_ptr<rtc::PacketSocketFactory>(
-      new rtc::BasicPacketSocketFactory(_workerThread->socketserver()));
+  _socketFactory = std::unique_ptr<webrtc::PacketSocketFactory>(
+      new webrtc::BasicPacketSocketFactory(_workerThread->socketserver()));
   assert(_socketFactory != nullptr);
+
+  NetworkOptions::Instance().ApplyTo(this);
 }
 
 PeerConnectionFactory::~PeerConnectionFactory() {
@@ -144,6 +149,11 @@ PeerConnectionFactory *PeerConnectionFactory::GetOrCreateDefault() {
   return _default;
 }
 
+PeerConnectionFactory *PeerConnectionFactory::Current() {
+  std::lock_guard<std::mutex> lock(_mutex);
+  return _default;
+}
+
 void PeerConnectionFactory::Release() {
   _mutex.lock();
   _references--;
@@ -156,10 +166,10 @@ void PeerConnectionFactory::Release() {
   _mutex.unlock();
 }
 
-void PeerConnectionFactory::Dispose() { rtc::CleanupSSL(); }
+void PeerConnectionFactory::Dispose() { webrtc::CleanupSSL(); }
 
 void PeerConnectionFactory::Init(Napi::Env env, Napi::Object exports) {
-  bool result = rtc::InitializeSSL();
+  bool result = webrtc::InitializeSSL();
   assert(result);
   (void)result;
 

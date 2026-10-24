@@ -7,6 +7,10 @@
  */
 #pragma once
 
+#include <memory>
+#include <mutex>
+#include <vector>
+
 #include <webrtc/api/data_channel_interface.h>
 #include <webrtc/api/scoped_refptr.h>
 
@@ -38,23 +42,32 @@ public:
 
   static void Init(Napi::Env, Napi::Object);
 
+  // createDataChannel() hands out a channel that starts "connecting", as in a
+  // browser, even when the native channel is already open; "open" follows.
+  void StartAsLocal();
+
   //
   // DataChannelObserver implementation.
   //
   void OnStateChange() override;
   void OnMessage(const webrtc::DataBuffer &buffer) override;
+  void OnBufferedAmountChange(uint64_t sent_data_size) override;
+  // Without this, libwebrtc routes callbacks through an adapter whose
+  // SetDelegate() drops callbacks that are still in flight when the observer
+  // is replaced, so messages arriving during the hand-off were lost.
+  bool IsOkToCallOnTheNetworkThread() override { return true; }
 
   void OnPeerConnectionClosed();
 
-  static ::node_webrtc::Wrap<RTCDataChannel *,
-                             rtc::scoped_refptr<webrtc::DataChannelInterface>,
-                             node_webrtc::DataChannelObserver *> *
+  static ::node_webrtc::Wrap<
+      RTCDataChannel *, webrtc::scoped_refptr<webrtc::DataChannelInterface>,
+      node_webrtc::DataChannelObserver *> *
   wrap();
 
 private:
   static RTCDataChannel *
   Create(node_webrtc::DataChannelObserver *,
-         rtc::scoped_refptr<webrtc::DataChannelInterface>);
+         webrtc::scoped_refptr<webrtc::DataChannelInterface>);
 
   static void HandleStateChange(RTCDataChannel &,
                                 webrtc::DataChannelInterface::DataState);
@@ -74,9 +87,16 @@ private:
   Napi::Value GetProtocol(const Napi::CallbackInfo &);
   Napi::Value GetBinaryType(const Napi::CallbackInfo &);
   Napi::Value GetReadyState(const Napi::CallbackInfo &);
+  Napi::Value GetBufferedAmountLowThreshold(const Napi::CallbackInfo &);
   void SetBinaryType(const Napi::CallbackInfo &, const Napi::Value &);
+  void SetBufferedAmountLowThreshold(const Napi::CallbackInfo &,
+                                     const Napi::Value &);
 
   void CleanupInternals();
+  // Callbacks from libwebrtc go through here. While the constructor hands the
+  // channel over from its DataChannelObserver, events delivered to `this` are
+  // held back until the observer's cached (older) events have been queued.
+  void DispatchInOrder(std::unique_ptr<Event<RTCDataChannel>> event);
 
   BinaryType _binaryType;
   int _cached_id;
@@ -86,9 +106,24 @@ private:
   bool _cached_negotiated;
   bool _cached_ordered;
   std::string _cached_protocol;
-  uint64_t _cached_buffered_amount;
+  // JS-visible state, only touched on the JS thread. bufferedAmount grows when
+  // send() queues data and shrinks when libwebrtc reports it sent (as a task),
+  // like blink does; readyState follows the events delivered to JS. Neither
+  // getter has to wait on a libwebrtc thread.
+  // bufferedAmount once the native channel is gone.
+  uint64_t _buffered_amount = 0;
+  uint64_t _buffered_amount_low_threshold = 0;
+  // Set by a send() that takes bufferedAmount above the threshold; the next
+  // OnBufferedAmountChange that finds it at or below fires bufferedamountlow.
+  bool _low_armed = false;
+  webrtc::DataChannelInterface::DataState _ready_state =
+      webrtc::DataChannelInterface::kConnecting;
+  bool _open_dispatched = false;
+  std::mutex _adopt_mutex;
+  bool _adopting = false;
+  std::vector<std::unique_ptr<Event<RTCDataChannel>>> _adopt_pending;
   RefPtr<PeerConnectionFactory> _factory;
-  rtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
+  webrtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
 };
 
 class DataChannelObserver : public EventQueue<RTCDataChannel>,
@@ -98,7 +133,7 @@ class DataChannelObserver : public EventQueue<RTCDataChannel>,
 public:
   DataChannelObserver(
       PeerConnectionFactory *factory,
-      rtc::scoped_refptr<webrtc::DataChannelInterface> jingleDataChannel);
+      webrtc::scoped_refptr<webrtc::DataChannelInterface> jingleDataChannel);
   ~DataChannelObserver() override = default;
 
   DataChannelObserver(const DataChannelObserver &) = delete;
@@ -106,16 +141,22 @@ public:
   DataChannelObserver &operator=(const DataChannelObserver &) = delete;
   DataChannelObserver &operator=(DataChannelObserver &&) = delete;
 
+  bool IsOkToCallOnTheNetworkThread() override { return true; }
   void OnStateChange() override;
   void OnMessage(const webrtc::DataBuffer &buffer) override;
 
-  rtc::scoped_refptr<webrtc::DataChannelInterface> channel() {
+  webrtc::scoped_refptr<webrtc::DataChannelInterface> channel() {
     return _jingleDataChannel;
   }
 
 private:
-  RefPtr<PeerConnectionFactory> _factory;
-  rtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
+  // Raw, not RefPtr: OnDataChannel constructs this on the signaling thread,
+  // and RefPtr's Ref()/Unref() are N-API calls that must only run on the main
+  // thread. RTCDataChannel takes the strong reference when it adopts this
+  // observer on the main thread. The RTCPeerConnection that created this
+  // observer keeps the factory alive until then.
+  PeerConnectionFactory *_factory;
+  webrtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
 };
 
 } // namespace node_webrtc

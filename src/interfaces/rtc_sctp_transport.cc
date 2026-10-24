@@ -33,7 +33,7 @@ RTCSctpTransport::RTCSctpTransport(const Napi::CallbackInfo &info)
   auto transport =
       *info[1]
            .As<Napi::External<
-               rtc::scoped_refptr<webrtc::SctpTransportInterface>>>()
+               webrtc::scoped_refptr<webrtc::SctpTransportInterface>>>()
            .Data();
 
   _transport = std::move(transport);
@@ -41,10 +41,14 @@ RTCSctpTransport::RTCSctpTransport(const Napi::CallbackInfo &info)
   _factory->WorkerThread()->BlockingCall([this]() {
     _dtls_transport = _transport->dtls_transport();
     _transport->RegisterObserver(this);
+    auto information = _transport->Information();
+    std::lock_guard<std::mutex> lock(_mutex);
+    _state = information.state();
+    _max_message_size = information.MaxMessageSize();
+    _max_channels = information.MaxChannels();
   });
 
-  if (_transport->Information().state() ==
-      webrtc::SctpTransportState::kClosed) {
+  if (_state == webrtc::SctpTransportState::kClosed) {
     // TODO(jack): figure out a way to not call this virtual method during
     // construction
     Stop();
@@ -58,25 +62,24 @@ void RTCSctpTransport::Stop() {
   AsyncObjectWrapWithLoop<RTCSctpTransport>::Stop();
 }
 
-Wrap<RTCSctpTransport *, rtc::scoped_refptr<webrtc::SctpTransportInterface>,
+Wrap<RTCSctpTransport *, webrtc::scoped_refptr<webrtc::SctpTransportInterface>,
      PeerConnectionFactory *> *
 RTCSctpTransport::wrap() {
-  static auto wrap =
-      new node_webrtc::Wrap<RTCSctpTransport *,
-                            rtc::scoped_refptr<webrtc::SctpTransportInterface>,
-                            PeerConnectionFactory *>(RTCSctpTransport::Create);
+  static auto wrap = new node_webrtc::Wrap<
+      RTCSctpTransport *, webrtc::scoped_refptr<webrtc::SctpTransportInterface>,
+      PeerConnectionFactory *>(RTCSctpTransport::Create);
   return wrap;
 }
 
 RTCSctpTransport *RTCSctpTransport::Create(
     PeerConnectionFactory *factory,
-    rtc::scoped_refptr<webrtc::SctpTransportInterface> transport) {
+    webrtc::scoped_refptr<webrtc::SctpTransportInterface> transport) {
   auto env = constructor().Env();
 
   auto object = constructor().New(
       {factory->Value(),
-       Napi::External<rtc::scoped_refptr<webrtc::SctpTransportInterface>>::New(
-           env, &transport)});
+       Napi::External<webrtc::scoped_refptr<webrtc::SctpTransportInterface>>::
+           New(env, &transport)});
 
   auto unwrapped = Unwrap(object);
   return unwrapped;
@@ -84,6 +87,12 @@ RTCSctpTransport *RTCSctpTransport::Create(
 
 void RTCSctpTransport::OnStateChange(
     const webrtc::SctpTransportInformation info) {
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _state = info.state();
+    _max_message_size = info.MaxMessageSize();
+    _max_channels = info.MaxChannels();
+  }
   Dispatch(CreateCallback<RTCSctpTransport>([this]() {
     auto env = Env();
     Napi::HandleScope scope(env);
@@ -102,22 +111,23 @@ Napi::Value RTCSctpTransport::GetTransport(const Napi::CallbackInfo &) {
 }
 
 Napi::Value RTCSctpTransport::GetState(const Napi::CallbackInfo &info) {
-  CONVERT_OR_THROW_AND_RETURN_NAPI(
-      info.Env(), _transport->Information().state(), result, Napi::Value)
+  std::lock_guard<std::mutex> lock(_mutex);
+  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), _state, result, Napi::Value)
   return result;
 }
 
 Napi::Value
 RTCSctpTransport::GetMaxMessageSize(const Napi::CallbackInfo &info) {
-  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(),
-                                   _transport->Information().MaxMessageSize(),
-                                   result, Napi::Value)
+  std::lock_guard<std::mutex> lock(_mutex);
+  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), _max_message_size, result,
+                                   Napi::Value)
   return result;
 }
 
 Napi::Value RTCSctpTransport::GetMaxChannels(const Napi::CallbackInfo &info) {
-  CONVERT_OR_THROW_AND_RETURN_NAPI(
-      info.Env(), _transport->Information().MaxChannels(), result, Napi::Value)
+  std::lock_guard<std::mutex> lock(_mutex);
+  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), _max_channels, result,
+                                   Napi::Value)
   return result;
 }
 

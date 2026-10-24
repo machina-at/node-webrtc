@@ -10,6 +10,7 @@
 #include <webrtc/api/peer_connection_interface.h>
 #include <webrtc/api/video/i420_buffer.h>
 #include <webrtc/api/video/video_frame.h>
+#include <webrtc/rtc_base/crypto_random.h>
 #include <webrtc/rtc_base/ref_counted_object.h>
 
 #include "src/converters/absl.hh"
@@ -49,12 +50,12 @@ Napi::Value RTCVideoSource::New(const Napi::CallbackInfo &info) {
 
   auto needsDenoising = init.needsDenoising
                             .Map([](auto needsDenoising) {
-                              return absl::optional<bool>(needsDenoising);
+                              return std::optional<bool>(needsDenoising);
                             })
-                            .FromMaybe(absl::optional<bool>());
+                            .FromMaybe(std::optional<bool>());
 
-  _source = new rtc::RefCountedObject<RTCVideoTrackSource>(init.isScreencast,
-                                                           needsDenoising);
+  _source = new webrtc::RefCountedObject<RTCVideoTrackSource>(init.isScreencast,
+                                                              needsDenoising);
 
   return info.Env().Undefined();
 }
@@ -64,13 +65,13 @@ Napi::Value RTCVideoSource::CreateTrack(const Napi::CallbackInfo &) {
   // around. How to handle?
   auto factory = PeerConnectionFactory::GetOrCreateDefault();
   auto track =
-      factory->factory()->CreateVideoTrack(_source, rtc::CreateRandomUuid());
+      factory->factory()->CreateVideoTrack(_source, webrtc::CreateRandomUuid());
   return _track_wrap.GetOrCreate(factory, track)->Value();
 }
 
 Napi::Value RTCVideoSource::OnFrame(const Napi::CallbackInfo &info) {
-  CONVERT_ARGS_OR_THROW_AND_RETURN_NAPI(info, buffer,
-                                        rtc::scoped_refptr<webrtc::I420Buffer>)
+  CONVERT_ARGS_OR_THROW_AND_RETURN_NAPI(
+      info, buffer, webrtc::scoped_refptr<webrtc::I420Buffer>)
 
   auto now = std::chrono::time_point_cast<std::chrono::microseconds>(
       std::chrono::system_clock::now());

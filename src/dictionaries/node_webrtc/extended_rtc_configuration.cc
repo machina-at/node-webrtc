@@ -12,10 +12,31 @@
 
 namespace node_webrtc {
 
+// Non-standard ICE timing knobs (milliseconds; -1 keeps libwebrtc's
+// default): how long without packets before a connection is "not receiving"
+// (iceConnectionReceivingTimeout), "unwritable" (iceUnwritableTimeout) and
+// "inactive" (iceInactiveTimeout), and the minimum interval between STUN
+// checks (iceCheckMinInterval).
 static ExtendedRTCConfiguration CreateExtendedRTCConfiguration(
     const webrtc::PeerConnectionInterface::RTCConfiguration &configuration,
-    const UnsignedShortRange portRange) {
-  return {configuration, portRange};
+    const UnsignedShortRange portRange, const int iceConnectionReceivingTimeout,
+    const int iceUnwritableTimeout, const int iceInactiveTimeout,
+    const int iceCheckMinInterval) {
+  auto extended = ExtendedRTCConfiguration(configuration, portRange);
+  if (iceConnectionReceivingTimeout >= 0) {
+    extended.configuration.ice_connection_receiving_timeout =
+        iceConnectionReceivingTimeout;
+  }
+  if (iceUnwritableTimeout >= 0) {
+    extended.configuration.ice_unwritable_timeout = iceUnwritableTimeout;
+  }
+  if (iceInactiveTimeout >= 0) {
+    extended.configuration.ice_inactive_timeout = iceInactiveTimeout;
+  }
+  if (iceCheckMinInterval >= 0) {
+    extended.configuration.ice_check_min_interval = iceCheckMinInterval;
+  }
+  return extended;
 }
 
 FROM_NAPI_IMPL(ExtendedRTCConfiguration, value) {
@@ -24,7 +45,11 @@ FROM_NAPI_IMPL(ExtendedRTCConfiguration, value) {
         return curry(CreateExtendedRTCConfiguration) %
                From<webrtc::PeerConnectionInterface::RTCConfiguration>(value) *
                GetOptional<UnsignedShortRange>(object, "portRange",
-                                               UnsignedShortRange());
+                                               UnsignedShortRange()) *
+               GetOptional<int>(object, "iceConnectionReceivingTimeout", -1) *
+               GetOptional<int>(object, "iceUnwritableTimeout", -1) *
+               GetOptional<int>(object, "iceInactiveTimeout", -1) *
+               GetOptional<int>(object, "iceCheckMinInterval", -1);
       });
 }
 
@@ -32,7 +57,10 @@ static Validation<Napi::Value> ExtendedRTCConfigurationToJavaScript(
     const Napi::Value iceServers, const Napi::Value iceTransportPolicy,
     const Napi::Value bundlePolicy, const Napi::Value rtcpMuxPolicy,
     const Napi::Value iceCandidatePoolSize, const Napi::Value portRange,
-    const Napi::Value sdpSemantics) {
+    const Napi::Value sdpSemantics,
+    const Napi::Value iceConnectionReceivingTimeout,
+    const Napi::Value iceUnwritableTimeout, const Napi::Value iceInactiveTimeout,
+    const Napi::Value iceCheckMinInterval) {
   auto env = iceServers.Env();
   Napi::EscapableHandleScope scope(iceServers.Env());
   NODE_WEBRTC_CREATE_OBJECT_OR_RETURN(env, object)
@@ -48,6 +76,16 @@ static Validation<Napi::Value> ExtendedRTCConfigurationToJavaScript(
   NODE_WEBRTC_CONVERT_AND_SET_OR_RETURN(env, object, "portRange", portRange)
   NODE_WEBRTC_CONVERT_AND_SET_OR_RETURN(env, object, "sdpSemantics",
                                         sdpSemantics)
+  // Only report the non-standard timing knobs that were set.
+  auto setIfSet = [&object](const char *name, const Napi::Value &value) {
+    if (value.IsNumber() && value.As<Napi::Number>().Int32Value() >= 0) {
+      object.Set(name, value);
+    }
+  };
+  setIfSet("iceConnectionReceivingTimeout", iceConnectionReceivingTimeout);
+  setIfSet("iceUnwritableTimeout", iceUnwritableTimeout);
+  setIfSet("iceInactiveTimeout", iceInactiveTimeout);
+  setIfSet("iceCheckMinInterval", iceCheckMinInterval);
   return Pure(scope.Escape(object));
 }
 
@@ -66,7 +104,19 @@ TO_NAPI_IMPL(ExtendedRTCConfiguration, pair) {
           pair.first, pair.second.configuration.ice_candidate_pool_size)) *
       From<Napi::Value>(std::make_pair(pair.first, pair.second.portRange)) *
       From<Napi::Value>(
-          std::make_pair(pair.first, pair.second.configuration.sdp_semantics)));
+          std::make_pair(pair.first, pair.second.configuration.sdp_semantics)) *
+      From<Napi::Value>(std::make_pair(
+          pair.first,
+          pair.second.configuration.ice_connection_receiving_timeout)) *
+      From<Napi::Value>(std::make_pair(
+          pair.first,
+          pair.second.configuration.ice_unwritable_timeout.value_or(-1))) *
+      From<Napi::Value>(std::make_pair(
+          pair.first,
+          pair.second.configuration.ice_inactive_timeout.value_or(-1))) *
+      From<Napi::Value>(std::make_pair(
+          pair.first,
+          pair.second.configuration.ice_check_min_interval.value_or(-1))));
 }
 
 } // namespace node_webrtc

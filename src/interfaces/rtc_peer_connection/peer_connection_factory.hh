@@ -9,8 +9,10 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 
 #include <node-addon-api/napi.h>
+#include <webrtc/api/environment/environment.h>
 #include <webrtc/api/peer_connection_interface.h>
 #include <webrtc/api/scoped_refptr.h>
 #include <webrtc/modules/audio_device/include/audio_device.h>
@@ -40,20 +42,25 @@ public:
    */
   static void Release();
 
+  // The current default factory, or nullptr if none is alive.
+  static PeerConnectionFactory *Current();
+
   /**
    * Get the underlying webrtc::PeerConnectionFactoryInterface.
    */
-  rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory() {
+  webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory() {
     return _factory;
   }
 
-  std::unique_ptr<rtc::Thread> &SignalingThread() { return _signalingThread; }
+  std::unique_ptr<webrtc::Thread> &SignalingThread() { return _signalingThread; }
 
-  std::unique_ptr<rtc::Thread> &WorkerThread() { return _workerThread; }
+  std::unique_ptr<webrtc::Thread> &WorkerThread() { return _workerThread; }
 
-  rtc::NetworkManager *getNetworkManager() { return _networkManager.get(); }
+  const webrtc::Environment &getEnvironment() { return *_environment; }
 
-  rtc::PacketSocketFactory *getSocketFactory() { return _socketFactory.get(); }
+  webrtc::NetworkManager *getNetworkManager() { return _networkManager.get(); }
+
+  webrtc::PacketSocketFactory *getSocketFactory() { return _socketFactory.get(); }
 
   static void Init(Napi::Env, Napi::Object);
 
@@ -62,18 +69,19 @@ public:
   static void Dispose();
 
 private:
-  std::unique_ptr<rtc::Thread> _signalingThread;
-  std::unique_ptr<rtc::Thread> _workerThread;
+  std::optional<webrtc::Environment> _environment;
+  std::unique_ptr<webrtc::Thread> _signalingThread;
+  std::unique_ptr<webrtc::Thread> _workerThread;
 
   static PeerConnectionFactory *_default; // NOLINT
   static std::mutex _mutex;               // NOLINT
   static int _references;                 // NOLINT
 
-  rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> _factory;
-  rtc::scoped_refptr<webrtc::AudioDeviceModule> _audioDeviceModule;
+  webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> _factory;
+  webrtc::scoped_refptr<webrtc::AudioDeviceModule> _audioDeviceModule;
 
-  std::unique_ptr<rtc::NetworkManager> _networkManager;
-  std::unique_ptr<rtc::PacketSocketFactory> _socketFactory;
+  std::unique_ptr<webrtc::NetworkManager> _networkManager;
+  std::unique_ptr<webrtc::PacketSocketFactory> _socketFactory;
 };
 
 } // namespace node_webrtc

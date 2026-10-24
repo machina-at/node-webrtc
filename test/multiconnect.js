@@ -57,13 +57,17 @@ function connect(callback) {
   connIdGen += 1;
   log(connName, "starting");
 
-  // setup two peers with simple-peer
+  // setup two peers with simple-peer. Its default iceServers include a stun:
+  // URL with a query, which libwebrtc (like Chrome) now rejects, and loopback
+  // connections need no STUN anyway.
   var peer1 = new SimplePeer({
     wrtc: wrtc,
+    config: { iceServers: [] },
   });
   var peer2 = new SimplePeer({
     wrtc: wrtc,
     initiator: true,
+    config: { iceServers: [] },
   });
 
   function cleanup() {

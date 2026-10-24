@@ -39,7 +39,7 @@ public:
   static void Init(Napi::Env, Napi::Object);
 
   static ::node_webrtc::Wrap<RTCDtlsTransport *,
-                             rtc::scoped_refptr<webrtc::DtlsTransportInterface>,
+                             webrtc::scoped_refptr<webrtc::DtlsTransportInterface>,
                              PeerConnectionFactory *> *
   wrap();
 
@@ -59,14 +59,14 @@ private:
 
   static RTCDtlsTransport *
   Create(PeerConnectionFactory *,
-         rtc::scoped_refptr<webrtc::DtlsTransportInterface>);
+         webrtc::scoped_refptr<webrtc::DtlsTransportInterface>);
 
   std::mutex _mutex;
   webrtc::DtlsTransportState _state;
-  std::vector<rtc::Buffer> _certs;
+  std::vector<webrtc::Buffer> _certs;
 
   RefPtr<PeerConnectionFactory> _factory;
-  rtc::scoped_refptr<webrtc::DtlsTransportInterface> _transport;
+  webrtc::scoped_refptr<webrtc::DtlsTransportInterface> _transport;
   OwnedWrap<RTCIceTransport> _transport_wrap;
 };
 

@@ -37,7 +37,7 @@ public:
   static void Init(Napi::Env, Napi::Object);
 
   static ::node_webrtc::Wrap<
-      RTCRtpTransceiver *, rtc::scoped_refptr<webrtc::RtpTransceiverInterface>,
+      RTCRtpTransceiver *, webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>,
       PeerConnectionFactory *> *
   wrap();
 
@@ -46,7 +46,7 @@ public:
 private:
   static RTCRtpTransceiver *
   Create(PeerConnectionFactory *,
-         rtc::scoped_refptr<webrtc::RtpTransceiverInterface>);
+         webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>);
 
   Napi::Value GetMid(const Napi::CallbackInfo &);
   Napi::Value GetSender(const Napi::CallbackInfo &);
@@ -60,7 +60,7 @@ private:
   Napi::Value SetCodecPreferences(const Napi::CallbackInfo &);
 
   RefPtr<PeerConnectionFactory> _factory;
-  rtc::scoped_refptr<webrtc::RtpTransceiverInterface> _transceiver;
+  webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> _transceiver;
   OwnedWrap<RTCRtpSender> _sender_wrap;
   OwnedWrap<RTCRtpReceiver> _receiver_wrap;
 };
