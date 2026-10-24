@@ -17,6 +17,7 @@
 #include "src/dictionaries/webrtc/rtp_capabilities.hh"
 #include "src/dictionaries/webrtc/rtp_parameters.hh"
 #include "src/enums/webrtc/media_type.hh"
+#include "src/node/error_factory.hh"
 #include "src/interfaces/media_stream.hh"
 #include "src/interfaces/media_stream_track.hh"
 #include "src/interfaces/rtc_dtls_transport.hh"
@@ -90,6 +91,7 @@ Napi::Value RTCRtpSender::GetCapabilities(const Napi::CallbackInfo &info) {
 
 Napi::Value RTCRtpSender::GetParameters(const Napi::CallbackInfo &info) {
   auto parameters = _sender->GetParameters();
+  _last_transaction_id = parameters.transaction_id;
   CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), parameters, result, Napi::Value)
   return result;
 }
@@ -98,7 +100,36 @@ Napi::Value RTCRtpSender::SetParameters(const Napi::CallbackInfo &info) {
   CREATE_DEFERRED(info.Env(), deffered)
   CONVERT_ARGS_OR_REJECT_AND_RETURN_NAPI(deferred, info, parameters,
                                          webrtc::RtpParameters)
-  auto error = _sender->SetParameters(parameters);
+  // JS only sees (and may only change) part of RtpParameters: the encodings
+  // it gets back lack SSRCs and other internals, so passing them through made
+  // libwebrtc reject every call ("modified SSRC"). Apply the fields JS may
+  // change onto the sender's current parameters instead, like blink does.
+  if (parameters.transaction_id != _last_transaction_id) {
+    Reject(deferred,
+           ErrorFactory::CreateInvalidModificationError(
+               info.Env(), "transactionId does not match the last "
+                           "getParameters() result"));
+    return deferred.Promise();
+  }
+  auto current = _sender->GetParameters();
+  if (parameters.encodings.size() != current.encodings.size()) {
+    Reject(deferred, ErrorFactory::CreateInvalidModificationError(
+                         info.Env(), "The number of encodings cannot change"));
+    return deferred.Promise();
+  }
+  for (size_t i = 0; i < current.encodings.size(); i++) {
+    auto &to = current.encodings[i];
+    auto const &from = parameters.encodings[i];
+    to.active = from.active;
+    to.max_bitrate_bps = from.max_bitrate_bps;
+    to.max_framerate = from.max_framerate;
+    to.scale_resolution_down_by = from.scale_resolution_down_by;
+  }
+  if (parameters.degradation_preference) {
+    current.degradation_preference = parameters.degradation_preference;
+  }
+  _last_transaction_id = current.transaction_id;
+  auto error = _sender->SetParameters(current);
   if (error.ok()) {
     deferred.Resolve(info.Env().Undefined());
   } else {

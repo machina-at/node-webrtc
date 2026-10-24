@@ -71,6 +71,20 @@ RTCPeerConnection::RTCPeerConnection(const Napi::CallbackInfo &info)
                                                  info) {
   auto env = info.Env();
 
+  // With C++ exceptions enabled node-addon-api keeps an object whose
+  // constructor threw wrapped instead of deleting it, and the loop's Ref()
+  // keeps it from being collected: its uv_async_t would hold the process open
+  // forever. Stopping the loop releases both.
+  struct StopOnThrow {
+    RTCPeerConnection &self;
+    Napi::Env env;
+    ~StopOnThrow() {
+      if (env.IsExceptionPending()) {
+        self.Stop();
+      }
+    }
+  } stop_on_throw{*this, env};
+
   if (!info.IsConstructCall()) {
     Napi::TypeError::New(
         env, "Use the new operator to construct the RTCPeerConnection.")
@@ -120,6 +134,7 @@ RTCPeerConnection::~RTCPeerConnection() {
   _transceiver_wrap.clear();
   _sender_wrap.clear();
   _transport_wrap.clear();
+  _sctp = nullptr;
   _channels.clear();
 
   _jinglePeerConnection = nullptr;
@@ -143,10 +158,14 @@ void RTCPeerConnection::OnSignalingChange(
 
 void RTCPeerConnection::OnIceConnectionChange(
     webrtc::PeerConnectionInterface::IceConnectionState) {
-  Dispatch(CreateCallback<RTCPeerConnection>([this]() {
-    MakeCallback("oniceconnectionstatechange", {});
-    MakeCallback("onconnectionstatechange", {});
-  }));
+  Dispatch(CreateCallback<RTCPeerConnection>(
+      [this]() { MakeCallback("oniceconnectionstatechange", {}); }));
+}
+
+void RTCPeerConnection::OnConnectionChange(
+    webrtc::PeerConnectionInterface::PeerConnectionState) {
+  Dispatch(CreateCallback<RTCPeerConnection>(
+      [this]() { MakeCallback("onconnectionstatechange", {}); }));
 }
 
 void RTCPeerConnection::OnIceGatheringChange(
@@ -825,6 +844,7 @@ Napi::Value RTCPeerConnection::Close(const Napi::CallbackInfo &info) {
   _transceiver_wrap.clear();
   _sender_wrap.clear();
   _transport_wrap.clear();
+  _sctp = nullptr;
   _channels.clear();
 
   _jinglePeerConnection = nullptr;
@@ -956,12 +976,17 @@ RTCPeerConnection::GetPendingRemoteDescription(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value RTCPeerConnection::GetSctp(const Napi::CallbackInfo &info) {
-  return _jinglePeerConnection && _jinglePeerConnection->GetSctpTransport()
-             ? _transport_wrap
-                   .GetOrCreate(_factory,
-                                _jinglePeerConnection->GetSctpTransport())
-                   ->Value()
-             : info.Env().Null();
+  if (!_jinglePeerConnection) {
+    return info.Env().Null();
+  }
+  if (_sctp == nullptr) {
+    auto transport = _jinglePeerConnection->GetSctpTransport();
+    if (!transport) {
+      return info.Env().Null();
+    }
+    _sctp = _transport_wrap.GetOrCreate(_factory, transport);
+  }
+  return _sctp->Value();
 }
 
 Napi::Value

@@ -58,6 +58,8 @@ public:
       webrtc::PeerConnectionInterface::SignalingState new_state) override;
   void OnIceConnectionChange(
       webrtc::PeerConnectionInterface::IceConnectionState new_state) override;
+  void OnConnectionChange(
+      webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
   void OnIceGatheringChange(
       webrtc::PeerConnectionInterface::IceGatheringState new_state) override;
   void OnIceCandidate(const webrtc::IceCandidateInterface *candidate) override;
@@ -145,6 +147,9 @@ private:
   OwnedWrap<RTCRtpTransceiver> _transceiver_wrap;
   OwnedWrap<RTCRtpSender> _sender_wrap;
   OwnedWrap<RTCSctpTransport> _transport_wrap;
+  // The SCTP transport does not change for the life of the connection; keep
+  // the wrap so reading `sctp` does not wait on the network thread each time.
+  RTCSctpTransport *_sctp = nullptr;
 };
 
 } // namespace node_webrtc

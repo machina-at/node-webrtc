@@ -7,6 +7,10 @@
  */
 #pragma once
 
+#include <memory>
+#include <mutex>
+#include <vector>
+
 #include <webrtc/api/data_channel_interface.h>
 #include <webrtc/api/scoped_refptr.h>
 
@@ -43,6 +47,7 @@ public:
   //
   void OnStateChange() override;
   void OnMessage(const webrtc::DataBuffer &buffer) override;
+  void OnBufferedAmountChange(uint64_t sent_data_size) override;
   // Without this, libwebrtc routes callbacks through an adapter whose
   // SetDelegate() drops callbacks that are still in flight when the observer
   // is replaced, so messages arriving during the hand-off were lost.
@@ -78,9 +83,16 @@ private:
   Napi::Value GetProtocol(const Napi::CallbackInfo &);
   Napi::Value GetBinaryType(const Napi::CallbackInfo &);
   Napi::Value GetReadyState(const Napi::CallbackInfo &);
+  Napi::Value GetBufferedAmountLowThreshold(const Napi::CallbackInfo &);
   void SetBinaryType(const Napi::CallbackInfo &, const Napi::Value &);
+  void SetBufferedAmountLowThreshold(const Napi::CallbackInfo &,
+                                     const Napi::Value &);
 
   void CleanupInternals();
+  // Callbacks from libwebrtc go through here. While the constructor hands the
+  // channel over from its DataChannelObserver, events delivered to `this` are
+  // held back until the observer's cached (older) events have been queued.
+  void DispatchInOrder(std::unique_ptr<Event<RTCDataChannel>> event);
 
   BinaryType _binaryType;
   int _cached_id;
@@ -90,7 +102,18 @@ private:
   bool _cached_negotiated;
   bool _cached_ordered;
   std::string _cached_protocol;
-  uint64_t _cached_buffered_amount;
+  // JS-visible state, only touched on the JS thread. bufferedAmount grows when
+  // send() queues data and shrinks when libwebrtc reports it sent (as a task),
+  // like blink does; readyState follows the events delivered to JS. Neither
+  // getter has to wait on a libwebrtc thread.
+  uint64_t _buffered_amount = 0;
+  uint64_t _buffered_amount_low_threshold = 0;
+  webrtc::DataChannelInterface::DataState _ready_state =
+      webrtc::DataChannelInterface::kConnecting;
+  bool _open_dispatched = false;
+  std::mutex _adopt_mutex;
+  bool _adopting = false;
+  std::vector<std::unique_ptr<Event<RTCDataChannel>>> _adopt_pending;
   RefPtr<PeerConnectionFactory> _factory;
   webrtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
 };

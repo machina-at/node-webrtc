@@ -7,6 +7,9 @@
  */
 #include "src/interfaces/rtc_data_channel.hh"
 
+#include <chrono>
+#include <cstdlib>
+#include <thread>
 #include <utility>
 
 #include <webrtc/api/data_channel_interface.h>
@@ -52,6 +55,19 @@ static void requeue(DataChannelObserver &observer, RTCDataChannel &channel) {
   }
 }
 
+// Test hook: NODE_WEBRTC_TEST_ADOPT_DELAY_MS widens the window between
+// RegisterObserver() and re-queueing the observer's cached events, so tests
+// can hit the hand-off deterministically. Unset in production.
+static void TestAdoptDelay() {
+  static const int delay_ms = [] {
+    const char *value = std::getenv("NODE_WEBRTC_TEST_ADOPT_DELAY_MS");
+    return value ? std::atoi(value) : 0;
+  }();
+  if (delay_ms > 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+  }
+}
+
 RTCDataChannel::RTCDataChannel(const Napi::CallbackInfo &info)
     : AsyncObjectWrapWithLoop<RTCDataChannel>("RTCDataChannel", *this, info),
       _binaryType(BinaryType::kArrayBuffer) {
@@ -70,12 +86,38 @@ RTCDataChannel::RTCDataChannel(const Napi::CallbackInfo &info)
   _factory = observer->_factory;
 
   _jingleDataChannel = observer->_jingleDataChannel;
-  _jingleDataChannel->RegisterObserver(this);
+  _ready_state = _jingleDataChannel->state();
 
-  // Re-queue cached observer events
-  requeue(*observer, *this);
+  // Events delivered to `this` after RegisterObserver() are newer than the
+  // ones the observer cached; hold them until the cached ones are queued.
+  {
+    std::lock_guard<std::mutex> lock(_adopt_mutex);
+    _adopting = true;
+  }
+  _jingleDataChannel->RegisterObserver(this);
+  TestAdoptDelay();
+  {
+    std::lock_guard<std::mutex> lock(_adopt_mutex);
+    requeue(*observer, *this);
+    for (auto &event : _adopt_pending) {
+      Dispatch(std::move(event));
+    }
+    _adopt_pending.clear();
+    _adopting = false;
+  }
 
   delete observer;
+
+  // A channel created on an established SCTP association can already be open
+  // before any observer was registered, in which case libwebrtc never reports
+  // the transition. Queued after the events above, so a cached "open" wins.
+  Dispatch(CreateCallback<RTCDataChannel>([this]() {
+    if (!_open_dispatched && _jingleDataChannel != nullptr &&
+        _jingleDataChannel->state() == webrtc::DataChannelInterface::kOpen) {
+      RTCDataChannel::HandleStateChange(*this,
+                                        webrtc::DataChannelInterface::kOpen);
+    }
+  }));
 
   // NOTE(mroberts): These doesn't actually matter yet.
   _cached_id = 0;
@@ -83,7 +125,16 @@ RTCDataChannel::RTCDataChannel(const Napi::CallbackInfo &info)
   _cached_max_retransmits = 0;
   _cached_negotiated = false;
   _cached_ordered = false;
-  _cached_buffered_amount = 0;
+}
+
+void RTCDataChannel::DispatchInOrder(
+    std::unique_ptr<Event<RTCDataChannel>> event) {
+  std::lock_guard<std::mutex> lock(_adopt_mutex);
+  if (_adopting) {
+    _adopt_pending.push_back(std::move(event));
+    return;
+  }
+  Dispatch(std::move(event));
 }
 
 RTCDataChannel::~RTCDataChannel() { wrap()->Release(this); }
@@ -102,7 +153,6 @@ void RTCDataChannel::CleanupInternals() {
   _cached_negotiated = _jingleDataChannel->negotiated();
   _cached_ordered = _jingleDataChannel->ordered();
   _cached_protocol = _jingleDataChannel->protocol();
-  _cached_buffered_amount = _jingleDataChannel->buffered_amount();
   _jingleDataChannel = nullptr;
 }
 
@@ -124,7 +174,7 @@ void RTCDataChannel::OnStateChange() {
   // This runs on the network thread. UnregisterObserver() blocks on the
   // signaling thread, which may itself be waiting on the network thread (e.g.
   // inside PeerConnection::Close()), so clean up on the JS thread instead.
-  Dispatch(CreateCallback<RTCDataChannel>([this, state]() {
+  DispatchInOrder(CreateCallback<RTCDataChannel>([this, state]() {
     if (state == webrtc::DataChannelInterface::kClosed) {
       if (_jingleDataChannel == nullptr) {
         // OnPeerConnectionClosed() already emitted "close".
@@ -138,6 +188,13 @@ void RTCDataChannel::OnStateChange() {
 
 void RTCDataChannel::HandleStateChange(
     RTCDataChannel &channel, webrtc::DataChannelInterface::DataState state) {
+  if (state == webrtc::DataChannelInterface::kOpen) {
+    if (channel._open_dispatched) {
+      return;
+    }
+    channel._open_dispatched = true;
+  }
+  channel._ready_state = state;
   auto env = channel.Env();
   Napi::HandleScope scope(env);
   auto object = Napi::Object::New(env);
@@ -153,8 +210,24 @@ void RTCDataChannel::HandleStateChange(
 }
 
 void RTCDataChannel::OnMessage(const webrtc::DataBuffer &buffer) {
-  Dispatch(CreateCallback<RTCDataChannel>(
+  DispatchInOrder(CreateCallback<RTCDataChannel>(
       [this, buffer]() { RTCDataChannel::HandleMessage(*this, buffer); }));
+}
+
+void RTCDataChannel::OnBufferedAmountChange(uint64_t sent_data_size) {
+  DispatchInOrder(CreateCallback<RTCDataChannel>([this, sent_data_size]() {
+    auto previous = _buffered_amount;
+    _buffered_amount =
+        previous > sent_data_size ? previous - sent_data_size : 0;
+    if (previous > _buffered_amount_low_threshold &&
+        _buffered_amount <= _buffered_amount_low_threshold) {
+      auto env = Env();
+      Napi::HandleScope scope(env);
+      auto object = Napi::Object::New(env);
+      object.Set("type", Napi::String::New(env, "bufferedamountlow"));
+      MakeCallback("dispatchEvent", {object});
+    }
+  }));
 }
 
 void RTCDataChannel::HandleMessage(RTCDataChannel &channel,
@@ -190,56 +263,74 @@ void RTCDataChannel::HandleMessage(RTCDataChannel &channel,
 
 Napi::Value RTCDataChannel::Send(const Napi::CallbackInfo &info) {
   auto env = info.Env();
-  if (_jingleDataChannel != nullptr) {
+  if (_jingleDataChannel == nullptr ||
+      _ready_state != webrtc::DataChannelInterface::kOpen) {
+    Napi::Error(env, ErrorFactory::CreateInvalidStateError(
+                         env, "RTCDataChannel.readyState is not 'open'"))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  std::unique_ptr<webrtc::DataBuffer> buffer;
+  if (info[0].IsString()) {
+    auto str = info[0].ToString();
+    buffer = std::make_unique<webrtc::DataBuffer>(str.Utf8Value());
+  } else {
+    Napi::ArrayBuffer arraybuffer;
+    size_t byte_offset = 0;
+    size_t byte_length = 0;
+
+    if (info[0].IsTypedArray()) {
+      auto typedArray = info[0].As<Napi::TypedArray>();
+      arraybuffer = typedArray.ArrayBuffer();
+      byte_offset = typedArray.ByteOffset();
+      byte_length = typedArray.ByteLength();
+    } else if (info[0].IsDataView()) {
+      auto dataView = info[0].As<Napi::DataView>();
+      arraybuffer = dataView.ArrayBuffer();
+      byte_offset = dataView.ByteOffset();
+      byte_length = dataView.ByteLength();
+    } else if (info[0].IsArrayBuffer()) {
+      arraybuffer = info[0].As<Napi::ArrayBuffer>();
+      byte_length = arraybuffer.ByteLength();
+    } else {
+      Napi::TypeError::New(env, "Expected a Blob or ArrayBuffer")
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+
+#pragma clang unsafe_buffer_usage begin
+    auto content = static_cast<char *>(arraybuffer.Data());
+    webrtc::CopyOnWriteBuffer data(content + byte_offset, byte_length);
+#pragma clang unsafe_buffer_usage end
+
+    buffer = std::make_unique<webrtc::DataBuffer>(data, true);
+  }
+
+  // libwebrtc closes the channel abruptly when its send queue overflows, which
+  // also drops the message. Refuse up front, like blink does.
+  auto size = static_cast<uint64_t>(buffer->size());
+  if (_buffered_amount + size >
+      webrtc::DataChannelInterface::MaxSendQueueSize()) {
+    Napi::Error(env, ErrorFactory::CreateOperationError(
+                         env, "RTCDataChannel send queue is full"))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  _buffered_amount += size;
+  if (!_jingleDataChannel->Send(*buffer)) {
+    _buffered_amount -= size;
     if (_jingleDataChannel->state() !=
         webrtc::DataChannelInterface::DataState::kOpen) {
       Napi::Error(env, ErrorFactory::CreateInvalidStateError(
                            env, "RTCDataChannel.readyState is not 'open'"))
           .ThrowAsJavaScriptException();
-      return env.Undefined();
-    }
-    if (info[0].IsString()) {
-      auto str = info[0].ToString();
-      auto data = str.Utf8Value();
-
-      webrtc::DataBuffer buffer(data);
-      _jingleDataChannel->Send(buffer);
     } else {
-      Napi::ArrayBuffer arraybuffer;
-      size_t byte_offset = 0;
-      size_t byte_length = 0;
-
-      if (info[0].IsTypedArray()) {
-        auto typedArray = info[0].As<Napi::TypedArray>();
-        arraybuffer = typedArray.ArrayBuffer();
-        byte_offset = typedArray.ByteOffset();
-        byte_length = typedArray.ByteLength();
-      } else if (info[0].IsDataView()) {
-        auto dataView = info[0].As<Napi::DataView>();
-        arraybuffer = dataView.ArrayBuffer();
-        byte_offset = dataView.ByteOffset();
-        byte_length = dataView.ByteLength();
-      } else if (info[0].IsArrayBuffer()) {
-        arraybuffer = info[0].As<Napi::ArrayBuffer>();
-        byte_length = arraybuffer.ByteLength();
-      } else {
-        Napi::TypeError::New(env, "Expected a Blob or ArrayBuffer")
-            .ThrowAsJavaScriptException();
-        return env.Undefined();
-      }
-
-#pragma clang unsafe_buffer_usage begin
-      auto content = static_cast<char *>(arraybuffer.Data());
-      webrtc::CopyOnWriteBuffer buffer(content + byte_offset, byte_length);
-#pragma clang unsafe_buffer_usage end
-
-      webrtc::DataBuffer data_buffer(buffer, true);
-      _jingleDataChannel->Send(data_buffer);
+      Napi::Error(env, ErrorFactory::CreateOperationError(
+                           env, "RTCDataChannel failed to send the message"))
+          .ThrowAsJavaScriptException();
     }
-  } else {
-    Napi::Error(env, ErrorFactory::CreateInvalidStateError(
-                         env, "RTCDataChannel.readyState is not 'open'"))
-        .ThrowAsJavaScriptException();
     return env.Undefined();
   }
 
@@ -248,18 +339,39 @@ Napi::Value RTCDataChannel::Send(const Napi::CallbackInfo &info) {
 
 Napi::Value RTCDataChannel::Close(const Napi::CallbackInfo &info) {
   if (_jingleDataChannel != nullptr) {
+    if (_ready_state == webrtc::DataChannelInterface::kConnecting ||
+        _ready_state == webrtc::DataChannelInterface::kOpen) {
+      _ready_state = webrtc::DataChannelInterface::kClosing;
+    }
     _jingleDataChannel->Close();
   }
   return info.Env().Undefined();
 }
 
 Napi::Value RTCDataChannel::GetBufferedAmount(const Napi::CallbackInfo &info) {
-  uint64_t buffered_amount = _jingleDataChannel != nullptr
-                                 ? _jingleDataChannel->buffered_amount()
-                                 : _cached_buffered_amount;
-  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), buffered_amount, result,
+  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), _buffered_amount, result,
                                    Napi::Value)
   return result;
+}
+
+Napi::Value
+RTCDataChannel::GetBufferedAmountLowThreshold(const Napi::CallbackInfo &info) {
+  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), _buffered_amount_low_threshold,
+                                   result, Napi::Value)
+  return result;
+}
+
+void RTCDataChannel::SetBufferedAmountLowThreshold(
+    const Napi::CallbackInfo &info, const Napi::Value &value) {
+  if (!value.IsNumber() || value.As<Napi::Number>().DoubleValue() < 0) {
+    Napi::TypeError::New(info.Env(),
+                         "bufferedAmountLowThreshold must be a non-negative "
+                         "number")
+        .ThrowAsJavaScriptException();
+    return;
+  }
+  _buffered_amount_low_threshold =
+      static_cast<uint64_t>(value.As<Napi::Number>().Int64Value());
 }
 
 Napi::Value RTCDataChannel::GetId(const Napi::CallbackInfo &info) {
@@ -326,9 +438,8 @@ Napi::Value RTCDataChannel::GetProtocol(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value RTCDataChannel::GetReadyState(const Napi::CallbackInfo &info) {
-  auto state = _jingleDataChannel ? _jingleDataChannel->state()
-                                  : webrtc::DataChannelInterface::kClosed;
-  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), state, result, Napi::Value)
+  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), _ready_state, result,
+                                   Napi::Value)
   return result;
 }
 
@@ -379,6 +490,9 @@ void RTCDataChannel::Init(Napi::Env env, Napi::Object exports) {
       env, "RTCDataChannel",
       {InstanceAccessor("bufferedAmount", &RTCDataChannel::GetBufferedAmount,
                         nullptr),
+       InstanceAccessor("bufferedAmountLowThreshold",
+                        &RTCDataChannel::GetBufferedAmountLowThreshold,
+                        &RTCDataChannel::SetBufferedAmountLowThreshold),
        InstanceAccessor("id", &RTCDataChannel::GetId, nullptr),
        InstanceAccessor("label", &RTCDataChannel::GetLabel, nullptr),
        InstanceAccessor("maxPacketLifeTime",

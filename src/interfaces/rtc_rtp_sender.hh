@@ -61,6 +61,8 @@ private:
 
   RefPtr<PeerConnectionFactory> _factory;
   webrtc::scoped_refptr<webrtc::RtpSenderInterface> _sender;
+  // transactionId of the last getParameters() result handed to JS.
+  std::string _last_transaction_id;
   OwnedWrap<MediaStreamTrack> _track_wrap;
   OwnedWrap<RTCDtlsTransport> _transport_wrap;
 };

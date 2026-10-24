@@ -8,6 +8,7 @@
 #pragma once
 
 #include <mutex>
+#include <optional>
 
 #include <node-addon-api/napi.h>
 #include <webrtc/api/scoped_refptr.h>
@@ -62,6 +63,13 @@ private:
   webrtc::scoped_refptr<webrtc::SctpTransportInterface> _transport;
 
   OwnedWrap<RTCDtlsTransport> _transport_wrap;
+
+  // Copied from SctpTransportInformation in the constructor and in
+  // OnStateChange(), so the getters do not wait on the network thread.
+  std::mutex _mutex;
+  webrtc::SctpTransportState _state = webrtc::SctpTransportState::kNew;
+  std::optional<double> _max_message_size;
+  std::optional<int> _max_channels;
 };
 
 } // namespace node_webrtc

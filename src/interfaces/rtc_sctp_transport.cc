@@ -41,10 +41,14 @@ RTCSctpTransport::RTCSctpTransport(const Napi::CallbackInfo &info)
   _factory->WorkerThread()->BlockingCall([this]() {
     _dtls_transport = _transport->dtls_transport();
     _transport->RegisterObserver(this);
+    auto information = _transport->Information();
+    std::lock_guard<std::mutex> lock(_mutex);
+    _state = information.state();
+    _max_message_size = information.MaxMessageSize();
+    _max_channels = information.MaxChannels();
   });
 
-  if (_transport->Information().state() ==
-      webrtc::SctpTransportState::kClosed) {
+  if (_state == webrtc::SctpTransportState::kClosed) {
     // TODO(jack): figure out a way to not call this virtual method during
     // construction
     Stop();
@@ -83,6 +87,12 @@ RTCSctpTransport *RTCSctpTransport::Create(
 
 void RTCSctpTransport::OnStateChange(
     const webrtc::SctpTransportInformation info) {
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _state = info.state();
+    _max_message_size = info.MaxMessageSize();
+    _max_channels = info.MaxChannels();
+  }
   Dispatch(CreateCallback<RTCSctpTransport>([this]() {
     auto env = Env();
     Napi::HandleScope scope(env);
@@ -101,22 +111,23 @@ Napi::Value RTCSctpTransport::GetTransport(const Napi::CallbackInfo &) {
 }
 
 Napi::Value RTCSctpTransport::GetState(const Napi::CallbackInfo &info) {
-  CONVERT_OR_THROW_AND_RETURN_NAPI(
-      info.Env(), _transport->Information().state(), result, Napi::Value)
+  std::lock_guard<std::mutex> lock(_mutex);
+  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), _state, result, Napi::Value)
   return result;
 }
 
 Napi::Value
 RTCSctpTransport::GetMaxMessageSize(const Napi::CallbackInfo &info) {
-  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(),
-                                   _transport->Information().MaxMessageSize(),
-                                   result, Napi::Value)
+  std::lock_guard<std::mutex> lock(_mutex);
+  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), _max_message_size, result,
+                                   Napi::Value)
   return result;
 }
 
 Napi::Value RTCSctpTransport::GetMaxChannels(const Napi::CallbackInfo &info) {
-  CONVERT_OR_THROW_AND_RETURN_NAPI(
-      info.Env(), _transport->Information().MaxChannels(), result, Napi::Value)
+  std::lock_guard<std::mutex> lock(_mutex);
+  CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), _max_channels, result,
+                                   Napi::Value)
   return result;
 }
 

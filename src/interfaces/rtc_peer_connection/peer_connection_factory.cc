@@ -7,6 +7,8 @@
  */
 #include "peer_connection_factory.hh"
 
+#include "src/methods/network_options.hh"
+
 #include <memory>
 
 #include <webrtc/api/audio/create_audio_device_module.h>
@@ -112,6 +114,8 @@ PeerConnectionFactory::PeerConnectionFactory(const Napi::CallbackInfo &info)
   _socketFactory = std::unique_ptr<webrtc::PacketSocketFactory>(
       new webrtc::BasicPacketSocketFactory(_workerThread->socketserver()));
   assert(_socketFactory != nullptr);
+
+  NetworkOptions::Instance().ApplyTo(this);
 }
 
 PeerConnectionFactory::~PeerConnectionFactory() {
@@ -142,6 +146,11 @@ PeerConnectionFactory *PeerConnectionFactory::GetOrCreateDefault() {
     _default->Ref();
   }
   _mutex.unlock();
+  return _default;
+}
+
+PeerConnectionFactory *PeerConnectionFactory::Current() {
+  std::lock_guard<std::mutex> lock(_mutex);
   return _default;
 }
 

@@ -79,3 +79,47 @@ export const RTCVideoSource: {
   prototype: RTCVideoSource;
   new (init?: RTCVideoSourceInit): RTCVideoSource;
 }
+
+/**
+ * Process-wide network options. They apply to every RTCPeerConnection, since
+ * all of them share one network manager and socket server. Set them before
+ * creating peer connections: a change to ignoredInterfaces is picked up at the
+ * network manager's next enumeration (every 2 s).
+ */
+export interface NetworkOptions {
+  /** Interface names whose networks gather no candidates (e.g. VM bridges). */
+  ignoredInterfaces?: string[];
+  /**
+   * Pin every socket libwebrtc binds to a local address to the interface that
+   * owns the address (IP_BOUND_IF on macOS, SO_BINDTODEVICE on Linux), so it
+   * leaves through that NIC whatever the routing table says.
+   */
+  bindSocketsToInterface?: boolean;
+}
+
+export const setNetworkOptions: (options: NetworkOptions) => void;
+
+export interface NetworkBindingStats {
+  calls: number;
+  succeeded: number;
+  failed: number;
+}
+
+export const getNetworkBindingStats: () => NetworkBindingStats;
+
+/**
+ * Non-standard RTCConfiguration members (milliseconds). Unset keeps
+ * libwebrtc's defaults.
+ */
+export interface RTCConfigurationExtensions {
+  portRange?: { min?: number; max?: number };
+  iceConnectionReceivingTimeout?: number;
+  iceUnwritableTimeout?: number;
+  iceInactiveTimeout?: number;
+  iceCheckMinInterval?: number;
+}
+
+/** Non-standard RTCIceServer member: "insecure-no-check" accepts any certificate on turns:. */
+export interface RTCIceServerExtensions {
+  tlsCertPolicy?: "secure" | "insecure-no-check";
+}

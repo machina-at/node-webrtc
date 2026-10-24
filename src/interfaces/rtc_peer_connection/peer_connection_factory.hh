@@ -42,6 +42,9 @@ public:
    */
   static void Release();
 
+  // The current default factory, or nullptr if none is alive.
+  static PeerConnectionFactory *Current();
+
   /**
    * Get the underlying webrtc::PeerConnectionFactoryInterface.
    */
