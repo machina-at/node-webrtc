@@ -4,6 +4,8 @@ const os = require("os");
 const test = require("tape");
 const { RTCPeerConnection, nonstandard } = require("..");
 const { connectedPair, until, whenOpen } = require("./lib/pair");
+const { spawnSync } = require("child_process");
+const path = require("path");
 
 // B5: pc.sctp and RTCSctpTransport's getters used to wait on the network
 // thread on every read; they are cached now and must still be right.
@@ -121,5 +123,24 @@ test("setNetworkOptions({ bindSocketsToInterface }) pins sockets and still conne
   } finally {
     nonstandard.setNetworkOptions({ bindSocketsToInterface: false });
   }
+  t.end();
+});
+
+// B7': a socket the binder cannot pin (e.g. SO_BINDTODEVICE without the
+// capability) falls back to the plain bind instead of failing it.
+test("setNetworkOptions({ bindSocketsToInterface }) falls back when pinning fails", (t) => {
+  const result = spawnSync(process.execPath, [path.join(__dirname, "lib", "bind-fail-pair.js")], {
+    encoding: "utf8",
+    timeout: 60000,
+    killSignal: "SIGKILL",
+    env: { ...process.env, NODE_WEBRTC_TEST_BIND_FAIL: "1" },
+  });
+  const line = result.stdout.trim().split("\n").at(-1) || "{}";
+  const out = JSON.parse(line);
+  t.equal(out.got, "hello", `data flows over plainly bound sockets (${line})`);
+  t.ok(out.failed > 0 && out.succeeded === 0, `every pin attempt failed (${line})`);
+  // A failing bind makes libwebrtc walk the whole port range (about 65536
+  // attempts per socket); a fallback bind is one attempt per socket.
+  t.ok(out.calls < 1000, `one pin attempt per socket, not one per port (${out.calls})`);
   t.end();
 });

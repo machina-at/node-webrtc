@@ -7,6 +7,7 @@
  */
 #include "src/methods/network_options.hh"
 
+#include <cstdlib>
 #include <cstring>
 
 #if !defined(_WIN32)
@@ -81,6 +82,14 @@ NetworkOptions::BindSocketToNetwork(int socket_fd,
     return webrtc::NetworkBindingResult::NOT_IMPLEMENTED;
   }
   _bind_calls++;
+  // Any result but SUCCESS / NOT_IMPLEMENTED fails PhysicalSocket::Bind, and
+  // the port allocator then retries every port in the range (tens of
+  // thousands of attempts per socket). When a socket cannot be pinned (e.g.
+  // SO_BINDTODEVICE without the capability), fall back to the plain bind().
+  if (std::getenv("NODE_WEBRTC_TEST_BIND_FAIL") != nullptr) {
+    _bind_failed++;
+    return webrtc::NetworkBindingResult::NOT_IMPLEMENTED;
+  }
   std::string name;
   ifaddrs *addrs = nullptr;
   if (getifaddrs(&addrs) == 0) {
@@ -94,7 +103,7 @@ NetworkOptions::BindSocketToNetwork(int socket_fd,
   }
   if (name.empty()) {
     _bind_failed++;
-    return webrtc::NetworkBindingResult::ADDRESS_NOT_FOUND;
+    return webrtc::NetworkBindingResult::NOT_IMPLEMENTED;
   }
   int result = -1;
 #if defined(__APPLE__)
@@ -112,7 +121,7 @@ NetworkOptions::BindSocketToNetwork(int socket_fd,
 #endif
   if (result != 0) {
     _bind_failed++;
-    return webrtc::NetworkBindingResult::FAILURE;
+    return webrtc::NetworkBindingResult::NOT_IMPLEMENTED;
   }
   _bind_succeeded++;
   return webrtc::NetworkBindingResult::SUCCESS;

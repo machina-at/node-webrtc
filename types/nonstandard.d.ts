@@ -92,7 +92,10 @@ export interface NetworkOptions {
   /**
    * Pin every socket libwebrtc binds to a local address to the interface that
    * owns the address (IP_BOUND_IF on macOS, SO_BINDTODEVICE on Linux), so it
-   * leaves through that NIC whatever the routing table says.
+   * leaves through that NIC whatever the routing table says. A socket that
+   * cannot be pinned (no such interface, or SO_BINDTODEVICE refused) is bound
+   * as usual and counted in getNetworkBindingStats().failed. Not supported on
+   * Windows.
    */
   bindSocketsToInterface?: boolean;
 }
