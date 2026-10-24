@@ -134,6 +134,12 @@ void RTCDataChannel::StartAsLocal() {
   }
 }
 
+void RTCDataChannel::StartAsRemote() {
+  if (_ready_state == webrtc::DataChannelInterface::kConnecting) {
+    _ready_state = webrtc::DataChannelInterface::kOpen;
+  }
+}
+
 void RTCDataChannel::DispatchInOrder(
     std::unique_ptr<Event<RTCDataChannel>> event) {
   std::lock_guard<std::mutex> lock(_adopt_mutex);

@@ -215,3 +215,27 @@ test("send() works once the native channel is open, before 'open' runs", async (
   b.close();
   t.end();
 });
+
+// A channel the remote side opened is announced as "open": readyState is
+// already "open" in the "datachannel" event (and send() works there), as in a
+// browser, even when the native state lags behind the wrapper.
+test("a remote channel is open in its datachannel event", async (t) => {
+  const { a, b } = await connectedPair();
+  const seen = [];
+  const errors = [];
+  b.ondatachannel = ({ channel: remote }) => {
+    seen.push(remote.readyState);
+    try {
+      remote.send("hi");
+    } catch (e) {
+      errors.push(e.name);
+    }
+  };
+  for (let i = 0; i < 20; i++) a.createDataChannel(`r${i}`);
+  await until(() => seen.length === 20, 10000, "datachannel").catch(() => {});
+  t.deepEqual([...new Set(seen)], ["open"], `readyState in datachannel (${seen.length} channels)`);
+  t.deepEqual(errors, [], "send() in datachannel did not throw");
+  a.close();
+  b.close();
+  t.end();
+});

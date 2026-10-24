@@ -9,6 +9,7 @@ require("./connect");
 require("./create-offer");
 require("./custom-settings"); // Seems a little slow...
 require("./data-channel-fixes");
+require("./eventtarget");
 require("./destructor");
 require("./fd-setsize");
 require("./get-configuration");

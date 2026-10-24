@@ -46,6 +46,11 @@ public:
   // browser, even when the native channel is already open; "open" follows.
   void StartAsLocal();
 
+  // A channel the remote side opened is announced already "open" (its
+  // "datachannel" event sees readyState "open"), as the spec requires, even if
+  // the native state has not caught up when the wrapper is made.
+  void StartAsRemote();
+
   //
   // DataChannelObserver implementation.
   //
