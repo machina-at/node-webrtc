@@ -69,6 +69,15 @@ static void TestAdoptDelay() {
   }
 }
 
+// Test hook: NODE_WEBRTC_TEST_REMOTE_STARTS_CONNECTING makes every wrapper
+// start as if its native channel had not opened yet, the way libwebrtc can
+// report a remote channel whose DCEP ACK is still queued. Unset in production.
+static bool TestStartsConnecting() {
+  static const bool on =
+      std::getenv("NODE_WEBRTC_TEST_REMOTE_STARTS_CONNECTING") != nullptr;
+  return on;
+}
+
 RTCDataChannel::RTCDataChannel(const Napi::CallbackInfo &info)
     : AsyncObjectWrapWithLoop<RTCDataChannel>("RTCDataChannel", *this, info),
       _binaryType(BinaryType::kArrayBuffer) {
@@ -87,7 +96,9 @@ RTCDataChannel::RTCDataChannel(const Napi::CallbackInfo &info)
   _factory = observer->_factory;
 
   _jingleDataChannel = observer->_jingleDataChannel;
-  _ready_state = _jingleDataChannel->state();
+  _ready_state = TestStartsConnecting()
+                     ? webrtc::DataChannelInterface::kConnecting
+                     : _jingleDataChannel->state();
 
   // Events delivered to `this` after RegisterObserver() are newer than the
   // ones the observer cached; hold them until the cached ones are queued.
@@ -133,6 +144,14 @@ void RTCDataChannel::StartAsLocal() {
       !_open_dispatched) {
     _ready_state = webrtc::DataChannelInterface::kConnecting;
   }
+}
+
+void RTCDataChannel::AnnounceWhenOpen(std::function<void()> announce) {
+  if (_ready_state == webrtc::DataChannelInterface::kOpen) {
+    announce();
+    return;
+  }
+  _announce = std::move(announce);
 }
 
 void RTCDataChannel::DispatchInOrder(
@@ -206,6 +225,14 @@ void RTCDataChannel::HandleStateChange(
   channel._ready_state = state;
   auto env = channel.Env();
   Napi::HandleScope scope(env);
+  if (channel._announce) {
+    auto announce = std::move(channel._announce);
+    channel._announce = nullptr;
+    // A channel that closes before it opens is never announced.
+    if (state == webrtc::DataChannelInterface::kOpen) {
+      announce();
+    }
+  }
   auto object = Napi::Object::New(env);
   if (state == webrtc::DataChannelInterface::kClosed) {
     object.Set("type", Napi::String::New(env, "close"));

@@ -7,6 +7,7 @@
  */
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -45,6 +46,13 @@ public:
   // createDataChannel() hands out a channel that starts "connecting", as in a
   // browser, even when the native channel is already open; "open" follows.
   void StartAsLocal();
+
+  // Runs `announce` (the remote side's "datachannel") once the channel is
+  // open, right before its "open" event, so the handler sees readyState
+  // "open" and can send. libwebrtc can report a remote channel while its DCEP
+  // ACK is still queued; announcing it then made sends from the handler fail.
+  // Dropped if the channel closes first.
+  void AnnounceWhenOpen(std::function<void()> announce);
 
   //
   // DataChannelObserver implementation.
@@ -122,6 +130,7 @@ private:
   webrtc::DataChannelInterface::DataState _ready_state =
       webrtc::DataChannelInterface::kConnecting;
   bool _open_dispatched = false;
+  std::function<void()> _announce;
   std::mutex _adopt_mutex;
   bool _adopting = false;
   std::vector<std::unique_ptr<Event<RTCDataChannel>>> _adopt_pending;

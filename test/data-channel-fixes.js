@@ -292,3 +292,33 @@ test("bufferedAmount of an idle channel does not wait on a libwebrtc thread", as
   b.close();
   t.end();
 });
+
+// A remote channel is announced only once its native side is open, so the
+// "datachannel" handler sees readyState "open" (as the spec requires) and can
+// send at once; "open" follows, and nothing the remote sent first is lost.
+// libwebrtc can report a remote channel while it is still connecting (its DCEP
+// ACK not yet sent); NODE_WEBRTC_TEST_REMOTE_STARTS_CONNECTING makes every
+// wrapper start that way.
+test("a remote channel is announced open and writable", (t) => {
+  const COUNT = 20;
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, "lib", "remote-announce.js"), String(COUNT)],
+    {
+      encoding: "utf8",
+      timeout: 60000,
+      killSignal: "SIGKILL",
+      env: { ...process.env, NODE_WEBRTC_TEST_REMOTE_STARTS_CONNECTING: "1" },
+    },
+  );
+  const line = result.stdout.trim().split("\n").at(-1) || "{}";
+  const out = JSON.parse(line);
+  t.equal(result.signal, null, `the script finished (signal=${result.signal})`);
+  t.deepEqual((out.states || []).filter((s) => s !== "open"), [], `datachannel sees readyState open (${line})`);
+  t.deepEqual(out.errors, [], "send() from the datachannel handler goes through");
+  t.equal(out.acks, COUNT, `every ack arrived (${out.acks}/${COUNT})`);
+  t.equal(out.hellos, COUNT, `every message sent first arrived (${out.hellos}/${COUNT})`);
+  t.equal(out.opened, COUNT, `open fired on every remote channel (${out.opened}/${COUNT})`);
+  t.deepEqual(out.misordered, [], "open follows datachannel");
+  t.end();
+});

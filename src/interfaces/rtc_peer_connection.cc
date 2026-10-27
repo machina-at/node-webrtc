@@ -262,7 +262,18 @@ void RTCPeerConnection::OnDataChannel(
     }
     auto channel =
         _data_channel_wrap.GetOrCreate(observer, observer->channel());
-    MakeCallback("ondatachannel", {channel->Value()});
+    // The channel owns the announcement, so it is captured raw (a RefPtr would
+    // keep the channel alive forever); the reference keeps this
+    // RTCPeerConnection alive while the announcement waits for "open".
+    auto *raw = channel.ptr();
+    auto self =
+        std::make_shared<Napi::ObjectReference>(Napi::Persistent(Value()));
+    raw->AnnounceWhenOpen([this, self, raw]() {
+      if (_factory == nullptr) {
+        return;
+      }
+      MakeCallback("ondatachannel", {raw->Value()});
+    });
   }));
 }
 
