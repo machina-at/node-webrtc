@@ -7,6 +7,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -25,6 +26,28 @@
 namespace node_webrtc {
 
 class DataChannelObserver;
+
+// The on_complete of a SendAsync(): takes `size` back off the in-flight count
+// when called, or when destroyed uncalled (libwebrtc drops the task when the
+// transport is not connected). Holds the count by shared_ptr because it can
+// outlive the RTCDataChannel on the network thread.
+class InFlightGuard {
+public:
+  InFlightGuard(std::shared_ptr<std::atomic<uint64_t>> counter, uint64_t size);
+  InFlightGuard(InFlightGuard &&other) noexcept;
+  InFlightGuard(const InFlightGuard &) = delete;
+  InFlightGuard &operator=(const InFlightGuard &) = delete;
+  InFlightGuard &operator=(InFlightGuard &&) = delete;
+  ~InFlightGuard();
+
+  void operator()(webrtc::RTCError error) &&;
+
+private:
+  void Release();
+
+  std::shared_ptr<std::atomic<uint64_t>> _counter;
+  uint64_t _size;
+};
 
 class RTCDataChannel : public AsyncObjectWrapWithLoop<RTCDataChannel>,
                        public webrtc::DataChannelObserver {
@@ -123,6 +146,10 @@ private:
   // channel is gone it holds the last native value. readyState follows the
   // events delivered to JS.
   uint64_t _buffered_amount = 0;
+  // Bytes handed to SendAsync() whose task has not run on the network thread
+  // yet, so the native buffered_amount() does not include them.
+  std::shared_ptr<std::atomic<uint64_t>> _in_flight =
+      std::make_shared<std::atomic<uint64_t>>(0);
   uint64_t _buffered_amount_low_threshold = 0;
   // Set by a send() that takes bufferedAmount above the threshold; the next
   // OnBufferedAmountChange that finds it at or below fires bufferedamountlow.

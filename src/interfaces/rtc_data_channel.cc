@@ -50,6 +50,24 @@ void DataChannelObserver::OnMessage(const webrtc::DataBuffer &buffer) {
   }));
 }
 
+InFlightGuard::InFlightGuard(std::shared_ptr<std::atomic<uint64_t>> counter,
+                             uint64_t size)
+    : _counter(std::move(counter)), _size(size) {}
+
+InFlightGuard::InFlightGuard(InFlightGuard &&other) noexcept
+    : _counter(std::move(other._counter)), _size(other._size) {}
+
+InFlightGuard::~InFlightGuard() { Release(); }
+
+void InFlightGuard::operator()(webrtc::RTCError /* error */) && { Release(); }
+
+void InFlightGuard::Release() {
+  if (_counter != nullptr) {
+    _counter->fetch_sub(_size);
+    _counter = nullptr;
+  }
+}
+
 static void requeue(DataChannelObserver &observer, RTCDataChannel &channel) {
   while (auto event = observer.Dequeue()) {
     channel.Dispatch(std::move(event));
@@ -363,23 +381,17 @@ Napi::Value RTCDataChannel::Send(const Napi::CallbackInfo &info) {
   if (_buffered_amount + size > _buffered_amount_low_threshold) {
     _low_armed = true;
   }
-  // Counted before Send() and kept on failure: libwebrtc adds every message it
-  // is handed to its own count, and reports decreases against that.
+  // Counted before the hand-off and kept on failure: libwebrtc adds every
+  // message it is handed to its own count, and reports decreases against that.
   _buffered_amount += size;
-  if (!_jingleDataChannel->Send(*buffer)) {
-    if (_jingleDataChannel->state() !=
-        webrtc::DataChannelInterface::DataState::kOpen) {
-      Napi::Error(env, ErrorFactory::CreateInvalidStateError(
-                           env, "RTCDataChannel.readyState is not 'open'"))
-          .ThrowAsJavaScriptException();
-    } else {
-      Napi::Error(env, ErrorFactory::CreateOperationError(
-                           env, "RTCDataChannel failed to send the message"))
-          .ThrowAsJavaScriptException();
-    }
-    return env.Undefined();
-  }
-
+  // SendAsync() posts to the network thread instead of waiting there, like
+  // blink. Until that task runs the message is not in the native
+  // buffered_amount(), so it is counted in flight; the guard gives it back
+  // when the task completes, or when libwebrtc drops it unrun (a transport
+  // that is not connected) and destroys the callback.
+  _in_flight->fetch_add(size);
+  _jingleDataChannel->SendAsync(std::move(*buffer),
+                                InFlightGuard(_in_flight, size));
   return env.Undefined();
 }
 
@@ -399,13 +411,16 @@ Napi::Value RTCDataChannel::Close(const Napi::CallbackInfo &info) {
 // really queued. Zero is therefore exact and needs no thread hop. Above zero
 // the native value is read as well: libwebrtc reports decreases only in
 // 100 KiB steps or at zero, and can skip the report at zero, so the tracked
-// value alone could stay above zero after the data has left.
+// value alone could stay above zero after the data has left. Messages still
+// in flight to the network thread are added to the native value; they are
+// read first, so one that lands in between is counted twice, never missed.
 uint64_t RTCDataChannel::QueuedAmount() const {
   if (_jingleDataChannel == nullptr || _buffered_amount == 0) {
     return _buffered_amount;
   }
-  return std::min<uint64_t>(_buffered_amount,
-                            _jingleDataChannel->buffered_amount());
+  auto in_flight = _in_flight->load();
+  return std::min<uint64_t>(
+      _buffered_amount, _jingleDataChannel->buffered_amount() + in_flight);
 }
 
 Napi::Value RTCDataChannel::GetBufferedAmount(const Napi::CallbackInfo &info) {

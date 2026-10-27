@@ -322,3 +322,73 @@ test("a remote channel is announced open and writable", (t) => {
   t.deepEqual(out.misordered, [], "open follows datachannel");
   t.end();
 });
+
+// send() hands the message to libwebrtc without waiting on its network thread
+// (SendAsync); a blocking Send() cost one thread hop per message.
+test("send() does not wait on a libwebrtc thread", async (t) => {
+  const { a, b } = await connectedPair();
+  let received = 0;
+  b.ondatachannel = ({ channel: remote }) => {
+    remote.onmessage = () => received++;
+  };
+  const channel = a.createDataChannel("fast");
+  await whenOpen(channel);
+  const COUNT = 2000;
+  const start = process.hrtime.bigint();
+  for (let i = 0; i < COUNT; i++) channel.send("x");
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  t.ok(ms < 15, `${COUNT} sends take ${ms.toFixed(1)}ms`);
+  await until(() => received === COUNT, 10000, "delivery").catch(() => {});
+  t.equal(received, COUNT, `every message arrived (${received}/${COUNT})`);
+  a.close();
+  b.close();
+  t.end();
+});
+
+// bufferedAmount includes a message as soon as send() returns, as the spec
+// requires, even while libwebrtc has not taken it yet; under-reporting would
+// let a sender ignore backpressure.
+test("bufferedAmount covers a message as soon as send() returns", async (t) => {
+  const { a, b } = await connectedPair();
+  b.ondatachannel = ({ channel: remote }) => {
+    remote.onmessage = () => {};
+  };
+  const channel = a.createDataChannel("covered");
+  await whenOpen(channel);
+  const CHUNK = 64 * 1024;
+  const short = [];
+  let sent = 0;
+  for (let i = 0; i < 32; i++) {
+    const before = channel.bufferedAmount;
+    channel.send(new Uint8Array(CHUNK));
+    sent += CHUNK;
+    const after = channel.bufferedAmount;
+    if (after < before + CHUNK && after < sent) short.push(`${i}:${before}->${after}`);
+  }
+  t.deepEqual(short, [], "bufferedAmount grew by the message right after send()");
+  await until(() => channel.bufferedAmount === 0, 15000, "drained").catch(() => {});
+  t.equal(channel.bufferedAmount, 0, "and returns to 0 once sent");
+  a.close();
+  b.close();
+  t.end();
+});
+
+// Messages keep their order when send() no longer waits for each one.
+test("messages sent back to back arrive in order", async (t) => {
+  const { a, b } = await connectedPair();
+  const got = [];
+  b.ondatachannel = ({ channel: remote }) => {
+    remote.onmessage = ({ data }) => got.push(Number(data));
+  };
+  const channel = a.createDataChannel("ordered");
+  await whenOpen(channel);
+  const COUNT = 5000;
+  for (let i = 0; i < COUNT; i++) channel.send(String(i));
+  await until(() => got.length === COUNT, 15000, "delivery").catch(() => {});
+  const misplaced = got.filter((n, i) => n !== i).length;
+  t.equal(got.length, COUNT, `every message arrived (${got.length}/${COUNT})`);
+  t.equal(misplaced, 0, "in the order they were sent");
+  a.close();
+  b.close();
+  t.end();
+});
