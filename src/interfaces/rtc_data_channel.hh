@@ -93,6 +93,9 @@ private:
                                      const Napi::Value &);
 
   void CleanupInternals();
+  // bufferedAmount: the tracked amount, capped by the native one while it is
+  // above zero (see GetBufferedAmount).
+  uint64_t QueuedAmount() const;
   // Callbacks from libwebrtc go through here. While the constructor hands the
   // channel over from its DataChannelObserver, events delivered to `this` are
   // held back until the observer's cached (older) events have been queued.
@@ -106,11 +109,11 @@ private:
   bool _cached_negotiated;
   bool _cached_ordered;
   std::string _cached_protocol;
-  // JS-visible state, only touched on the JS thread. bufferedAmount grows when
-  // send() queues data and shrinks when libwebrtc reports it sent (as a task),
-  // like blink does; readyState follows the events delivered to JS. Neither
-  // getter has to wait on a libwebrtc thread.
-  // bufferedAmount once the native channel is gone.
+  // JS-visible state, only touched on the JS thread. The tracked
+  // bufferedAmount grows when send() hands data to libwebrtc and shrinks when
+  // libwebrtc reports it sent (as a task), like blink does; once the native
+  // channel is gone it holds the last native value. readyState follows the
+  // events delivered to JS.
   uint64_t _buffered_amount = 0;
   uint64_t _buffered_amount_low_threshold = 0;
   // Set by a send() that takes bufferedAmount above the threshold; the next

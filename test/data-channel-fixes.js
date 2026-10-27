@@ -99,7 +99,7 @@ test("a channel created on a connected pc fires open exactly once", async (t) =>
 });
 
 // B4: bufferedamountlow fires when bufferedAmount drops to
-// bufferedAmountLowThreshold. bufferedAmount is read from the native channel,
+// bufferedAmountLowThreshold. bufferedAmount is capped by the native value,
 // so how much piles up depends on how fast the platform drains loopback (on
 // the Windows runner nothing does); the event is required only when it did.
 test("bufferedAmount and bufferedamountlow track send()", async (t) => {
@@ -265,6 +265,29 @@ test("a remote channel takes sends whenever readyState is open", async (t) => {
   await until(() => received + errors.length >= COUNT, 15000, "acks").catch(() => {});
   t.deepEqual(errors, [], "no send() failed on a channel that said it was open");
   t.equal(received, COUNT, `every ack arrived (${received}/${COUNT})`);
+  a.close();
+  b.close();
+  t.end();
+});
+
+// bufferedAmount on a channel with nothing queued must not wait on a libwebrtc
+// thread: planx reads it for every channel of a peer on each send, and each
+// native read is a blocking hop (20000 reads took ~650 ms, readyState ~3 ms).
+test("bufferedAmount of an idle channel does not wait on a libwebrtc thread", async (t) => {
+  const { a, b } = await connectedPair();
+  b.ondatachannel = () => {};
+  const channel = a.createDataChannel("idle");
+  await whenOpen(channel);
+  channel.send("x");
+  await until(() => channel.bufferedAmount === 0, 5000, "drained").catch(() => {});
+  // Let libwebrtc's "sent" report reach the JS thread; a synchronous loop
+  // right after the drain would read before it can run.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const start = process.hrtime.bigint();
+  for (let i = 0; i < 20000; i++) void channel.bufferedAmount;
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  t.equal(channel.bufferedAmount, 0, "nothing is queued");
+  t.ok(ms < 30, `20000 reads of an idle bufferedAmount take ${ms.toFixed(1)}ms`);
   a.close();
   b.close();
   t.end();
