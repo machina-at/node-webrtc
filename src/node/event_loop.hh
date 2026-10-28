@@ -54,13 +54,16 @@ protected:
 
   virtual void Run() {
     Napi::HandleScope scope(_env);
-    if (!_should_stop) {
-      while (auto event = this->Dequeue()) {
-        Napi::CallbackScope callbackScope(_env, *_context);
-        event->Dispatch(_target);
-        if (_should_stop) {
-          break;
-        }
+    // Run what was queued before Stop() even if it is already set: a target
+    // that dispatches its final event and then calls Stop() (e.g. a transport
+    // reaching "closed") must still deliver that event. An event that calls
+    // Stop() while it runs still ends the loop after itself.
+    bool stopped_before = _should_stop;
+    while (auto event = this->Dequeue()) {
+      Napi::CallbackScope callbackScope(_env, *_context);
+      event->Dispatch(_target);
+      if (_should_stop && !stopped_before) {
+        break;
       }
     }
     if (_should_stop) {

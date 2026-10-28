@@ -9,6 +9,10 @@ const { platform, arch, buildFolder } = require("./build-vars.js");
 
 const args = ["-O", buildFolder, "-a", arch];
 
+if (process.env.LIBWEBRTC_PREBUILT_DIR) {
+  args.push(`--CDLIBWEBRTC_PREBUILT_DIR=${process.env.LIBWEBRTC_PREBUILT_DIR}`);
+}
+
 if (process.env.DEBUG) {
   args.push(...["--debug", "--CDCMAKE_EXPORT_COMPILE_COMMANDS=1"]);
 }

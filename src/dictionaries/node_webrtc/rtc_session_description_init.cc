@@ -30,22 +30,23 @@ TO_NAPI_IMPL(RTCSessionDescriptionInit, pair) {
 
 CONVERTER_IMPL(RTCSessionDescriptionInit, webrtc::SessionDescriptionInterface *,
                init) {
-  std::string type_;
+  auto type_ = webrtc::SdpType::kOffer;
   switch (init.type) {
   case RTCSdpType::kOffer:
-    type_ = "offer";
+    type_ = webrtc::SdpType::kOffer;
     break;
   case RTCSdpType::kPrAnswer:
-    type_ = "pranswer";
+    type_ = webrtc::SdpType::kPrAnswer;
     break;
   case RTCSdpType::kAnswer:
-    type_ = "answer";
+    type_ = webrtc::SdpType::kAnswer;
     break;
   case RTCSdpType::kRollback:
-    type_ = "rollback";
+    type_ = webrtc::SdpType::kRollback;
   }
   webrtc::SdpParseError error;
-  auto description = webrtc::CreateSessionDescription(type_, init.sdp, &error);
+  auto description =
+      webrtc::CreateSessionDescription(type_, init.sdp, &error).release();
   if (!description) {
     return Validation<webrtc::SessionDescriptionInterface *>::Invalid(
         error.description);

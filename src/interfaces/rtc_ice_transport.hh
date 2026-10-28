@@ -7,20 +7,20 @@
  */
 #pragma once
 
+#include <memory>
 #include <mutex>
 
 #include <node-addon-api/napi.h>
 #include <webrtc/api/ice_transport_interface.h>
 #include <webrtc/api/scoped_refptr.h>
 #include <webrtc/p2p/base/ice_transport_internal.h>
-#include <webrtc/rtc_base/third_party/sigslot/sigslot.h>
 
 #include "src/enums/node_webrtc/rtc_ice_component.hh"
 #include "src/node/async_object_wrap_with_loop.hh"
 #include "src/node/ref_ptr.hh"
 #include "src/node/wrap.hh"
 
-namespace cricket {
+namespace webrtc {
 class IceTransportInternal;
 }
 
@@ -28,9 +28,7 @@ namespace node_webrtc {
 
 class PeerConnectionFactory;
 
-class RTCIceTransport
-    : public AsyncObjectWrapWithLoop<RTCIceTransport>,
-      public sigslot::has_slots<sigslot::multi_threaded_local> {
+class RTCIceTransport : public AsyncObjectWrapWithLoop<RTCIceTransport> {
 public:
   explicit RTCIceTransport(const Napi::CallbackInfo &);
   ~RTCIceTransport() override;
@@ -43,7 +41,7 @@ public:
   static void Init(Napi::Env, Napi::Object);
 
   static ::node_webrtc::Wrap<RTCIceTransport *,
-                             rtc::scoped_refptr<webrtc::IceTransportInterface>,
+                             webrtc::scoped_refptr<webrtc::IceTransportInterface>,
                              PeerConnectionFactory *> *
   wrap();
 
@@ -57,10 +55,17 @@ private:
 
   static RTCIceTransport *
   Create(PeerConnectionFactory *,
-         rtc::scoped_refptr<webrtc::IceTransportInterface>);
+         webrtc::scoped_refptr<webrtc::IceTransportInterface>);
 
-  void OnStateChanged(cricket::IceTransportInternal *);
-  void OnGatheringStateChanged(cricket::IceTransportInternal *);
+  struct CallbackGuard {
+    std::mutex mutex;
+    RTCIceTransport *self = nullptr;
+  };
+
+  void Unsubscribe();
+
+  void OnStateChanged(webrtc::IceTransportInternal *);
+  void OnGatheringStateChanged(webrtc::IceTransportInternal *);
 
   void TakeSnapshot();
 
@@ -77,12 +82,14 @@ private:
 
   RTCIceComponent _component = RTCIceComponent::kRtp;
   RefPtr<PeerConnectionFactory> _factory;
-  cricket::IceGatheringState _gathering_state =
-      cricket::IceGatheringState::kIceGatheringNew;
+  webrtc::IceGatheringState _gathering_state =
+      webrtc::IceGatheringState::kIceGatheringNew;
   std::mutex _mutex{};
-  cricket::IceRole _role = cricket::IceRole::ICEROLE_UNKNOWN;
+  webrtc::IceRole _role = webrtc::IceRole::ICEROLE_UNKNOWN;
+  std::shared_ptr<CallbackGuard> _callback_guard =
+      std::make_shared<CallbackGuard>();
   webrtc::IceTransportState _state = webrtc::IceTransportState::kNew;
-  rtc::scoped_refptr<webrtc::IceTransportInterface> _transport;
+  webrtc::scoped_refptr<webrtc::IceTransportInterface> _transport;
 };
 
 } // namespace node_webrtc

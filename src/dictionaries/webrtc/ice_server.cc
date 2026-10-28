@@ -27,19 +27,31 @@ using stringOrStrings = Either<std::vector<std::string>, std::string>;
   DICT_DEFAULT(stringOrCredential, credential, "credential",                   \
                MakeLeft<RTCOAuthCredential>(std::string("")))                  \
   DICT_DEFAULT(RTCIceCredentialType, credentialType, "credentialType",         \
-               RTCIceCredentialType::kPassword)
+               RTCIceCredentialType::kPassword)                                \
+  DICT_DEFAULT(std::string, tlsCertPolicy, "tlsCertPolicy", "secure")
 
 static Validation<webrtc::PeerConnectionInterface::IceServer>
 ICE_SERVER_FN(const Either<std::vector<std::string>, std::string> &urlsOrUrl,
               const std::string &username,
               const Either<std::string, RTCOAuthCredential> &credential,
-              const RTCIceCredentialType credentialType) {
+              const RTCIceCredentialType credentialType,
+              const std::string &tlsCertPolicy) {
   if (credential.IsRight() ||
       credentialType != RTCIceCredentialType::kPassword) {
     return Validation<webrtc::PeerConnectionInterface::IceServer>::Invalid(
         "OAuth is not currently supported");
   }
+  // Non-standard: "insecure-no-check" accepts any certificate on turns: (e.g. a
+  // self-signed TURN server); "secure" (the default) verifies it.
+  if (tlsCertPolicy != "secure" && tlsCertPolicy != "insecure-no-check") {
+    return Validation<webrtc::PeerConnectionInterface::IceServer>::Invalid(
+        "tlsCertPolicy must be 'secure' or 'insecure-no-check'");
+  }
   webrtc::PeerConnectionInterface::IceServer iceServer;
+  iceServer.tls_cert_policy =
+      tlsCertPolicy == "insecure-no-check"
+          ? webrtc::PeerConnectionInterface::kTlsCertPolicyInsecureNoCheck
+          : webrtc::PeerConnectionInterface::kTlsCertPolicySecure;
   iceServer.urls = urlsOrUrl.FromLeft(std::vector<std::string>());
   iceServer.uri = urlsOrUrl.FromRight("");
   iceServer.username = username;
@@ -68,6 +80,11 @@ TO_NAPI_IMPL(webrtc::PeerConnectionInterface::IceServer, pair) {
                                           iceServer.password)
     NODE_WEBRTC_CONVERT_AND_SET_OR_RETURN(env, object, "credentialType",
                                           RTCIceCredentialType::kPassword)
+  }
+  if (iceServer.tls_cert_policy ==
+      webrtc::PeerConnectionInterface::kTlsCertPolicyInsecureNoCheck) {
+    NODE_WEBRTC_CONVERT_AND_SET_OR_RETURN(env, object, "tlsCertPolicy",
+                                          std::string("insecure-no-check"))
   }
 
   return Pure(scope.Escape(object));

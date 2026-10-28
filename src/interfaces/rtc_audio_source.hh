@@ -29,7 +29,7 @@ public:
   RTCAudioTrackSource(RTCAudioTrackSource &&) = delete;
   RTCAudioTrackSource &operator=(const RTCAudioTrackSource &) = delete;
   RTCAudioTrackSource &operator=(RTCAudioTrackSource &&) = delete;
-  RTCAudioTrackSource() = default;
+  RTCAudioTrackSource() : webrtc::LocalAudioSource(nullptr) {}
   ~RTCAudioTrackSource() override {
     PeerConnectionFactory::Release();
     _factory = nullptr;
@@ -90,7 +90,7 @@ private:
   Napi::Value CreateTrack(const Napi::CallbackInfo &);
   Napi::Value OnData(const Napi::CallbackInfo &);
 
-  rtc::scoped_refptr<RTCAudioTrackSource> _source;
+  webrtc::scoped_refptr<RTCAudioTrackSource> _source;
   OwnedWrap<MediaStreamTrack> _track_wrap;
 };
 

@@ -8,6 +8,7 @@
 #include "src/interfaces/rtc_audio_source.hh"
 
 #include <webrtc/api/peer_connection_interface.h>
+#include <webrtc/rtc_base/crypto_random.h>
 #include <webrtc/rtc_base/ref_counted_object.h>
 
 #include "src/converters.hh"
@@ -24,14 +25,14 @@ Napi::FunctionReference &RTCAudioSource::constructor() {
 
 RTCAudioSource::RTCAudioSource(const Napi::CallbackInfo &info)
     : Napi::ObjectWrap<RTCAudioSource>(info) {
-  _source = rtc::make_ref_counted<RTCAudioTrackSource>();
+  _source = webrtc::make_ref_counted<RTCAudioTrackSource>();
 }
 
 Napi::Value RTCAudioSource::CreateTrack(const Napi::CallbackInfo &) {
   // TODO(mroberts): Again, we have some implicit factory we are threading
   // around. How to handle?
   auto factory = PeerConnectionFactory::GetOrCreateDefault();
-  auto track = factory->factory()->CreateAudioTrack(rtc::CreateRandomUuid(),
+  auto track = factory->factory()->CreateAudioTrack(webrtc::CreateRandomUuid(),
                                                     _source.get());
   return _track_wrap.GetOrCreate(factory, track)->Value();
 }

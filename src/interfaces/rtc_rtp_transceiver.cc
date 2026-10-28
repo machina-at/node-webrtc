@@ -7,6 +7,8 @@
  */
 #include "src/interfaces/rtc_rtp_transceiver.hh"
 
+#include <span>
+
 #include <webrtc/api/rtp_transceiver_interface.h>
 #include <webrtc/api/scoped_refptr.h>
 
@@ -40,7 +42,7 @@ RTCRtpTransceiver::RTCRtpTransceiver(const Napi::CallbackInfo &info)
   auto transceiver =
       *info[1]
            .As<Napi::External<
-               rtc::scoped_refptr<webrtc::RtpTransceiverInterface>>>()
+               webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>>>()
            .Data();
 
   _transceiver = std::move(transceiver);
@@ -117,7 +119,7 @@ Napi::Value
 RTCRtpTransceiver::SetCodecPreferences(const Napi::CallbackInfo &info) {
   CONVERT_ARGS_OR_THROW_AND_RETURN_NAPI(info, codecs,
                                         std::vector<webrtc::RtpCodecCapability>)
-  auto capabilities = rtc::ArrayView<webrtc::RtpCodecCapability>(codecs);
+  auto capabilities = std::span<webrtc::RtpCodecCapability>(codecs);
   auto error = _transceiver->SetCodecPreferences(capabilities);
   if (!error.ok()) {
     CONVERT_OR_THROW_AND_RETURN_NAPI(info.Env(), &error, result, Napi::Value)
@@ -126,26 +128,27 @@ RTCRtpTransceiver::SetCodecPreferences(const Napi::CallbackInfo &info) {
   return info.Env().Undefined();
 }
 
-Wrap<RTCRtpTransceiver *, rtc::scoped_refptr<webrtc::RtpTransceiverInterface>,
+Wrap<RTCRtpTransceiver *,
+     webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>,
      PeerConnectionFactory *> *
 RTCRtpTransceiver::wrap() {
-  static auto wrap =
-      new node_webrtc::Wrap<RTCRtpTransceiver *,
-                            rtc::scoped_refptr<webrtc::RtpTransceiverInterface>,
-                            PeerConnectionFactory *>(RTCRtpTransceiver::Create);
+  static auto wrap = new node_webrtc::Wrap<
+      RTCRtpTransceiver *,
+      webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>,
+      PeerConnectionFactory *>(RTCRtpTransceiver::Create);
   return wrap;
 }
 
 RTCRtpTransceiver *RTCRtpTransceiver::Create(
     PeerConnectionFactory *factory,
-    rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
   auto env = constructor().Env();
   Napi::HandleScope scope(env);
 
   auto object = constructor().New(
       {factory->Value(),
-       Napi::External<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>>::New(
-           env, &transceiver)});
+       Napi::External<webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>>::
+           New(env, &transceiver)});
 
   auto unwrapped = Unwrap(object);
   return unwrapped;

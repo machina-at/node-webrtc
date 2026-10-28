@@ -38,7 +38,7 @@ private:
   Napi::Value JsStop(const Napi::CallbackInfo &);
 
   bool _stopped = false;
-  rtc::scoped_refptr<webrtc::AudioTrackInterface> _track;
+  webrtc::scoped_refptr<webrtc::AudioTrackInterface> _track;
 };
 
 } // namespace node_webrtc

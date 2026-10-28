@@ -33,18 +33,30 @@ RTCIceTransport::RTCIceTransport(const Napi::CallbackInfo &info)
   auto transport =
       *info[1]
            .As<Napi::External<
-               rtc::scoped_refptr<webrtc::IceTransportInterface>>>()
+               webrtc::scoped_refptr<webrtc::IceTransportInterface>>>()
            .Data();
 
   _transport = std::move(transport);
+  _callback_guard->self = this;
 
   _factory->WorkerThread()->BlockingCall([this]() {
     auto internal = _transport->internal();
     if (internal) {
-      internal->SignalIceTransportStateChanged.connect(
-          this, &RTCIceTransport::OnStateChanged);
-      internal->SignalGatheringState.connect(
-          this, &RTCIceTransport::OnGatheringStateChanged);
+      auto guard = _callback_guard;
+      internal->SubscribeIceTransportStateChanged(
+          this, [guard](webrtc::IceTransportInternal *transport) {
+            std::lock_guard<std::mutex> lock(guard->mutex);
+            if (guard->self) {
+              guard->self->OnStateChanged(transport);
+            }
+          });
+      internal->AddGatheringStateCallback(
+          this, [guard](webrtc::IceTransportInternal *transport) {
+            std::lock_guard<std::mutex> lock(guard->mutex);
+            if (guard->self) {
+              guard->self->OnGatheringStateChanged(transport);
+            }
+          });
     }
     TakeSnapshot();
     if (_state == webrtc::IceTransportState::kClosed) {
@@ -64,53 +76,57 @@ void RTCIceTransport::TakeSnapshot() {
     _gathering_state = internal->gathering_state();
   } else {
     _state = webrtc::IceTransportState::kClosed;
-    _gathering_state = cricket::IceGatheringState::kIceGatheringComplete;
+    _gathering_state = webrtc::IceGatheringState::kIceGatheringComplete;
   }
 }
 
-RTCIceTransport::~RTCIceTransport() { wrap()->Release(this); }
+RTCIceTransport::~RTCIceTransport() {
+  Unsubscribe();
+  wrap()->Release(this);
+}
+
+void RTCIceTransport::Unsubscribe() {
+  std::lock_guard<std::mutex> lock(_callback_guard->mutex);
+  _callback_guard->self = nullptr;
+}
 
 void RTCIceTransport::OnRTCDtlsTransportStopped() {
   std::lock_guard<std::mutex> lock(_mutex);
   _state = webrtc::IceTransportState::kClosed;
-  _gathering_state = cricket::IceGatheringState::kIceGatheringComplete;
+  _gathering_state = webrtc::IceGatheringState::kIceGatheringComplete;
   Stop();
 }
 
 void RTCIceTransport::Stop() {
-  // _factory->_workerThread->Invoke<void>(RTC_FROM_HERE, [this]() {
-  //   _transport->internal()->SignalIceTransportStateChanged.disconnect(this);
-  //   _transport->internal()->SignalGatheringState.disconnect(this);
-  // });
+  Unsubscribe();
   AsyncObjectWrapWithLoop<RTCIceTransport>::Stop();
 }
 
-Wrap<RTCIceTransport *, rtc::scoped_refptr<webrtc::IceTransportInterface>,
+Wrap<RTCIceTransport *, webrtc::scoped_refptr<webrtc::IceTransportInterface>,
      PeerConnectionFactory *> *
 RTCIceTransport::wrap() {
-  static auto wrap =
-      new node_webrtc::Wrap<RTCIceTransport *,
-                            rtc::scoped_refptr<webrtc::IceTransportInterface>,
-                            PeerConnectionFactory *>(RTCIceTransport::Create);
+  static auto wrap = new node_webrtc::Wrap<
+      RTCIceTransport *, webrtc::scoped_refptr<webrtc::IceTransportInterface>,
+      PeerConnectionFactory *>(RTCIceTransport::Create);
   return wrap;
 }
 
 RTCIceTransport *RTCIceTransport::Create(
     PeerConnectionFactory *factory,
-    rtc::scoped_refptr<webrtc::IceTransportInterface> transport) {
+    webrtc::scoped_refptr<webrtc::IceTransportInterface> transport) {
   auto env = constructor().Env();
   Napi::HandleScope scope(env);
 
   auto object = constructor().New(
       {factory->Value(),
-       Napi::External<rtc::scoped_refptr<webrtc::IceTransportInterface>>::New(
-           env, &transport)});
+       Napi::External<webrtc::scoped_refptr<webrtc::IceTransportInterface>>::
+           New(env, &transport)});
 
   auto unwrapped = Unwrap(object);
   return unwrapped;
 }
 
-void RTCIceTransport::OnStateChanged(cricket::IceTransportInternal *) {
+void RTCIceTransport::OnStateChanged(webrtc::IceTransportInternal *) {
   TakeSnapshot();
 
   Dispatch(CreateCallback<RTCIceTransport>([this]() {
@@ -126,7 +142,7 @@ void RTCIceTransport::OnStateChanged(cricket::IceTransportInternal *) {
   }
 }
 
-void RTCIceTransport::OnGatheringStateChanged(cricket::IceTransportInternal *) {
+void RTCIceTransport::OnGatheringStateChanged(webrtc::IceTransportInternal *) {
   TakeSnapshot();
 
   Dispatch(CreateCallback<RTCIceTransport>([this]() {
@@ -160,15 +176,15 @@ Napi::Value RTCIceTransport::GetGatheringState(const Napi::CallbackInfo &info) {
   std::lock_guard<std::mutex> lock(_mutex);
   webrtc::PeerConnectionInterface::IceGatheringState state = {};
   switch (_gathering_state) {
-  case cricket::IceGatheringState::kIceGatheringNew:
+  case webrtc::IceGatheringState::kIceGatheringNew:
     state =
         webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringNew;
     break;
-  case cricket::IceGatheringState::kIceGatheringGathering:
+  case webrtc::IceGatheringState::kIceGatheringGathering:
     state = webrtc::PeerConnectionInterface::IceGatheringState::
         kIceGatheringGathering;
     break;
-  case cricket::IceGatheringState::kIceGatheringComplete:
+  case webrtc::IceGatheringState::kIceGatheringComplete:
     state = webrtc::PeerConnectionInterface::IceGatheringState::
         kIceGatheringComplete;
     break;

@@ -28,7 +28,7 @@ public:
       : PromiseCreator<RTCPeerConnection>(peer_connection, deferred) {}
 
   void OnStatsDelivered(
-      const rtc::scoped_refptr<const webrtc::RTCStatsReport> &) override;
+      const webrtc::scoped_refptr<const webrtc::RTCStatsReport> &) override;
 };
 
 } // namespace node_webrtc

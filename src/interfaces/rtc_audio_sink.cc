@@ -41,7 +41,7 @@ RTCAudioSink::RTCAudioSink(const Napi::CallbackInfo &info)
   }
 
   CONVERT_ARGS_OR_THROW_AND_RETURN_VOID_NAPI(
-      info, track, rtc::scoped_refptr<webrtc::AudioTrackInterface>)
+      info, track, webrtc::scoped_refptr<webrtc::AudioTrackInterface>)
 
   _track = std::move(track);
   _track->AddSink(this);

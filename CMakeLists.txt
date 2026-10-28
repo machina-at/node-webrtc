@@ -10,7 +10,13 @@ macro(assign_bool var)
   endif()
 endmacro()
 
-assign_bool(use_custom_libcxx "TRUE")
+# The prebuilt libwebrtc for Windows is built against the MSVC STL (libcpmt)
+# rather than Chromium's libc++, so the addon has to use the same.
+if (WIN32 AND LIBWEBRTC_PREBUILT_DIR)
+  assign_bool(use_custom_libcxx "FALSE")
+else()
+  assign_bool(use_custom_libcxx "TRUE")
+endif()
 assign_bool(is_arm32 "y$ENV{TARGET_ARCH}" STREQUAL "yarm")
 assign_bool(is_arm64 "y$ENV{TARGET_ARCH}" STREQUAL "yarm64")
 
@@ -18,7 +24,7 @@ if (APPLE AND ${is_arm64})
   set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE INTERNAL "" FORCE)
 endif()
 
-if (WIN32 AND ${use_custom_libcxx})
+if (WIN32)
   set(CMAKE_C_COMPILER "clang-cl" CACHE STRING "" FORCE)
   set(CMAKE_CXX_COMPILER "clang-cl" CACHE STRING "" FORCE)
 endif()
@@ -29,6 +35,38 @@ project(${MODULE})
 include(ExternalProject)
 find_package(Git REQUIRED)
 find_package(Threads REQUIRED)
+
+set(LIBWEBRTC_PREBUILT_DIR "" CACHE PATH
+  "Link against a prebuilt libwebrtc laid out by scripts/download-prebuilt-webrtc.js instead of building it")
+
+if(LIBWEBRTC_PREBUILT_DIR)
+
+# prebuilt libwebrtc
+# -----------------------------------------------------------------------------
+
+set(libwebrtc_source_dir "${LIBWEBRTC_PREBUILT_DIR}")
+
+add_library(libwebrtc STATIC IMPORTED)
+if(WIN32)
+  set_property(TARGET libwebrtc PROPERTY IMPORTED_LOCATION "${LIBWEBRTC_PREBUILT_DIR}/lib/webrtc.lib")
+else()
+  set_property(TARGET libwebrtc PROPERTY IMPORTED_LOCATION "${LIBWEBRTC_PREBUILT_DIR}/lib/libwebrtc.a")
+endif()
+
+# The prebuilt libwebrtc.a already contains libc++, libc++abi and the video
+# codec libraries, so these only exist to keep the link line below uniform.
+foreach(lib libc++ libc++abi libbuiltin_video_encoder_factory libbuiltin_video_decoder_factory
+            librtc_internal_video_codecs libadapted_video_track_source librtc_simulcast_encoder_adapter)
+  add_library(${lib} INTERFACE)
+endforeach()
+
+set(libc++_include_dir
+  "${LIBWEBRTC_PREBUILT_DIR}/libc++/include"
+  "${LIBWEBRTC_PREBUILT_DIR}/libc++"
+)
+set(libc++abi_include_dir "${LIBWEBRTC_PREBUILT_DIR}/libc++abi/include")
+
+else()
 
 # depot_tools
 # -----------------------------------------------------------------------------
@@ -75,15 +113,19 @@ set(libc++_objects
   atomic${obj_ext}
   barrier${obj_ext}
   bind${obj_ext}
+  call_once${obj_ext}
   charconv${obj_ext}
   chrono${obj_ext}
   condition_variable${obj_ext}
   condition_variable_destructor${obj_ext}
   d2fixed${obj_ext}
   d2s${obj_ext}
+  directory_iterator${obj_ext}
+  error_category${obj_ext}
   exception${obj_ext}
   f2s${obj_ext}
-  format${obj_ext}
+  filesystem_clock${obj_ext}
+  filesystem_error${obj_ext}
   functional${obj_ext}
   future${obj_ext}
   hash${obj_ext}
@@ -95,7 +137,11 @@ set(libc++_objects
   mutex${obj_ext}
   mutex_destructor${obj_ext}
   new${obj_ext}
+  new_handler${obj_ext}
+  new_helpers${obj_ext}
+  operations${obj_ext}
   optional${obj_ext}
+  path${obj_ext}
   random${obj_ext}
   random_shuffle${obj_ext}
   regex${obj_ext}
@@ -106,7 +152,6 @@ set(libc++_objects
   system_error${obj_ext}
   thread${obj_ext}
   typeinfo${obj_ext}
-  utility${obj_ext}
   valarray${obj_ext}
   variant${obj_ext}
   vector${obj_ext}
@@ -183,7 +228,8 @@ set_target_properties(libc++abi PROPERTIES IMPORTED_OBJECTS_DEBUG "${libc++abi_o
 # M106: branch-heads/5249
 # M110: branch-heads/5481
 # M114: branch-heads/5735
-set(WEBRTC_REVISION branch-heads/5735)
+# M155: branch-heads/8059
+set(WEBRTC_REVISION branch-heads/8059)
 
 file(STRINGS nix.gni NIX_GN_GEN_ARGS)
 list(APPEND GN_GEN_ARGS
@@ -250,17 +296,17 @@ if (WIN32)
   set(byproducts
     ${libc++_objects}
     ${libwebrtc_binary_dir}/obj/webrtc.lib
-    ${libwebrtc_binary_dir}/obj/api/libjingle_peerconnection_api.lib
   )
 else()
   set(byproducts
     ${libc++_objects}
     ${libc++abi_objects}
     ${libwebrtc_binary_dir}/obj/libwebrtc.a
-    ${libwebrtc_binary_dir}/obj/api/libjingle_peerconnection_api.a
     ${libwebrtc_binary_dir}/obj/api/video_codecs/libbuiltin_video_encoder_factory.a
     ${libwebrtc_binary_dir}/obj/api/video_codecs/libbuiltin_video_decoder_factory.a
     ${libwebrtc_binary_dir}/obj/media/librtc_internal_video_codecs.a
+    ${libwebrtc_binary_dir}/obj/api/video/libadapted_video_track_source.a
+    ${libwebrtc_binary_dir}/obj/media/librtc_simulcast_encoder_adapter.a
   )
 endif()
 
@@ -299,15 +345,6 @@ else()
   set_property(TARGET libwebrtc PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/libwebrtc.a")
 endif()
 
-add_library(libpeerconnection STATIC IMPORTED)
-add_dependencies(libpeerconnection project_libwebrtc)
-
-if(WIN32)
-  set_property(TARGET libpeerconnection PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/api/libjingle_peerconnection_api.lib")
-else()
-  set_property(TARGET libpeerconnection PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/api/libjingle_peerconnection_api.a")
-endif()
-
 # Video codec factories (audio factories are already in libwebrtc.a)
 add_library(libbuiltin_video_encoder_factory STATIC IMPORTED)
 add_dependencies(libbuiltin_video_encoder_factory project_libwebrtc)
@@ -321,11 +358,29 @@ add_library(librtc_internal_video_codecs STATIC IMPORTED)
 add_dependencies(librtc_internal_video_codecs project_libwebrtc)
 set_property(TARGET librtc_internal_video_codecs PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/media/librtc_internal_video_codecs.a")
 
+add_library(libadapted_video_track_source STATIC IMPORTED)
+add_dependencies(libadapted_video_track_source project_libwebrtc)
+
+if(WIN32)
+  set_property(TARGET libadapted_video_track_source PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/api/video/adapted_video_track_source.lib")
+else()
+  set_property(TARGET libadapted_video_track_source PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/api/video/libadapted_video_track_source.a")
+endif()
+
+add_library(librtc_simulcast_encoder_adapter STATIC IMPORTED)
+add_dependencies(librtc_simulcast_encoder_adapter project_libwebrtc)
+
+if(WIN32)
+  set_property(TARGET librtc_simulcast_encoder_adapter PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/media/rtc_simulcast_encoder_adapter.lib")
+else()
+  set_property(TARGET librtc_simulcast_encoder_adapter PROPERTY IMPORTED_LOCATION "${libwebrtc_binary_dir}/obj/media/librtc_simulcast_encoder_adapter.a")
+endif()
+
 set(libc++_include_dir
-  "${libwebrtc_source_dir}/src/buildtools/third_party/libc++/trunk/include"
+  "${libwebrtc_source_dir}/src/third_party/libc++/src/include"
   "${libwebrtc_source_dir}/src/buildtools/third_party/libc++"
 )
-set(libc++abi_include_dir "${libwebrtc_source_dir}/src/buildtools/third_party/libc++abi/trunk/include")
+set(libc++abi_include_dir "${libwebrtc_source_dir}/src/third_party/libc++abi/src/include")
 
 # NOTE(mroberts): I would like this to be INTERFACE.
 #
@@ -337,6 +392,8 @@ set(libc++abi_include_dir "${libwebrtc_source_dir}/src/buildtools/third_party/li
 #   ${libwebrtc_source_dir}/webrtc/third_party/abseil-cpp
 #   ${libwebrtc_source_dir}/webrtc/third_party/libyuv/include
 # )
+
+endif()
 
 # catch2
 # -----------------------------------------------------------------------------
@@ -398,17 +455,19 @@ target_include_directories(${MODULE} PRIVATE
 
 target_link_libraries(${MODULE} PRIVATE
   ${CMAKE_THREAD_LIBS_INIT}
-  libpeerconnection
   libwebrtc
   libbuiltin_video_encoder_factory
   libbuiltin_video_decoder_factory
   librtc_internal_video_codecs
+  libadapted_video_track_source
+  librtc_simulcast_encoder_adapter
   ${CMAKE_JS_LIB}
 )
 
 target_compile_definitions(${MODULE} PRIVATE
   -DNAPI_VERSION=3
   -DUSE_BUILTIN_SW_CODECS
+  -DWEBRTC_HAVE_SCTP
 )
 
 if(WIN32)
@@ -428,7 +487,10 @@ if(WIN32)
   )
 
   if (${use_custom_libcxx})
-    target_include_directories(${MODULE} SYSTEM PRIVATE
+    # clang-cl searches SYSTEM directories after those in %INCLUDE% (MSVC and
+    # the UCRT), so libc++'s <stddef.h> wrapper would lose to the UCRT one.
+    # Put libc++ first as a regular include directory instead.
+    target_include_directories(${MODULE} BEFORE PRIVATE
       ${libc++_include_dir}
     )
 
@@ -446,6 +508,9 @@ if(WIN32)
     target_compile_definitions(${MODULE} PRIVATE
       -D_LIBCPP_ABI_NAMESPACE=Cr
       -D_LIBCPP_ABI_VERSION=2
+      -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE
+      -D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS
+      -D_LIBCPP_INSTRUMENTED_WITH_ASAN=0
       -D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS
       -D_LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS
     )
@@ -511,6 +576,9 @@ else()
     target_compile_definitions(${MODULE} PRIVATE
       -D_LIBCPP_ABI_NAMESPACE=Cr
       -D_LIBCPP_ABI_VERSION=2
+      -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE
+      -D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS
+      -D_LIBCPP_INSTRUMENTED_WITH_ASAN=0
     )
   endif()
 
