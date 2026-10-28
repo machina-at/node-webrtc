@@ -50,21 +50,46 @@ void DataChannelObserver::OnMessage(const webrtc::DataBuffer &buffer) {
   }));
 }
 
-InFlightGuard::InFlightGuard(std::shared_ptr<std::atomic<uint64_t>> counter,
-                             uint64_t size)
-    : _counter(std::move(counter)), _size(size) {}
+void SendQueueView::Attach(webrtc::DataChannelInterface *native) {
+  std::lock_guard<std::mutex> lock(mutex);
+  channel = native;
+}
 
-InFlightGuard::InFlightGuard(InFlightGuard &&other) noexcept
-    : _counter(std::move(other._counter)), _size(other._size) {}
+void SendQueueView::Detach() {
+  std::lock_guard<std::mutex> lock(mutex);
+  channel = nullptr;
+}
 
-InFlightGuard::~InFlightGuard() { Release(); }
+SendCompletion::SendCompletion(std::shared_ptr<SendQueueView> view,
+                               uint64_t size)
+    : _view(std::move(view)), _size(size) {}
 
-void InFlightGuard::operator()(webrtc::RTCError /* error */) && { Release(); }
+SendCompletion::SendCompletion(SendCompletion &&other) noexcept
+    : _view(std::move(other._view)), _size(other._size) {}
 
-void InFlightGuard::Release() {
-  if (_counter != nullptr) {
-    _counter->fetch_sub(_size);
-    _counter = nullptr;
+SendCompletion::~SendCompletion() { Release(); }
+
+// The native amount is stored before in_flight shrinks, and QueuedAmount()
+// reads in_flight first: a send that completes in between is counted twice,
+// never missed.
+void SendCompletion::operator()(webrtc::RTCError /* error */) && {
+  if (_view == nullptr) {
+    return;
+  }
+  {
+    // On the network thread, so the proxy runs buffered_amount() in place.
+    std::lock_guard<std::mutex> lock(_view->mutex);
+    if (_view->channel != nullptr) {
+      _view->native_at_send.store(_view->channel->buffered_amount());
+    }
+  }
+  Release();
+}
+
+void SendCompletion::Release() {
+  if (_view != nullptr) {
+    _view->in_flight.fetch_sub(_size);
+    _view = nullptr;
   }
 }
 
@@ -114,6 +139,7 @@ RTCDataChannel::RTCDataChannel(const Napi::CallbackInfo &info)
   _factory = observer->_factory;
 
   _jingleDataChannel = observer->_jingleDataChannel;
+  _send_queue->Attach(_jingleDataChannel.get());
   _ready_state = TestStartsConnecting()
                      ? webrtc::DataChannelInterface::kConnecting
                      : _jingleDataChannel->state();
@@ -182,7 +208,10 @@ void RTCDataChannel::DispatchInOrder(
   Dispatch(std::move(event));
 }
 
-RTCDataChannel::~RTCDataChannel() { wrap()->Release(this); }
+RTCDataChannel::~RTCDataChannel() {
+  _send_queue->Detach();
+  wrap()->Release(this);
+}
 
 void RTCDataChannel::CleanupInternals() {
   if (_jingleDataChannel == nullptr) {
@@ -199,6 +228,7 @@ void RTCDataChannel::CleanupInternals() {
   _cached_negotiated = _jingleDataChannel->negotiated();
   _cached_ordered = _jingleDataChannel->ordered();
   _cached_protocol = _jingleDataChannel->protocol();
+  _send_queue->Detach();
   _jingleDataChannel = nullptr;
 }
 
@@ -386,12 +416,12 @@ Napi::Value RTCDataChannel::Send(const Napi::CallbackInfo &info) {
   _buffered_amount += size;
   // SendAsync() posts to the network thread instead of waiting there, like
   // blink. Until that task runs the message is not in the native
-  // buffered_amount(), so it is counted in flight; the guard gives it back
-  // when the task completes, or when libwebrtc drops it unrun (a transport
+  // buffered_amount(), so it is counted in flight; the completion gives it
+  // back when the task runs, or when libwebrtc drops it unrun (a transport
   // that is not connected) and destroys the callback.
-  _in_flight->fetch_add(size);
+  _send_queue->in_flight.fetch_add(size);
   _jingleDataChannel->SendAsync(std::move(*buffer),
-                                InFlightGuard(_in_flight, size));
+                                SendCompletion(_send_queue, size));
   return env.Undefined();
 }
 
@@ -408,19 +438,17 @@ Napi::Value RTCDataChannel::Close(const Napi::CallbackInfo &info) {
 
 // The tracked amount mirrors libwebrtc's own count: it grows on send() and
 // shrinks when libwebrtc reports data sent, so it never falls below what is
-// really queued. Zero is therefore exact and needs no thread hop. Above zero
-// the native value is read as well: libwebrtc reports decreases only in
-// 100 KiB steps or at zero, and can skip the report at zero, so the tracked
-// value alone could stay above zero after the data has left. Messages still
-// in flight to the network thread are added to the native value; they are
-// read first, so one that lands in between is counted twice, never missed.
+// really queued, but libwebrtc reports only in 100 KiB steps or at zero. The
+// native amount recorded after the last send that ran, plus what is still in
+// flight to the network thread, is also an upper bound (only sends add to the
+// queue) and follows the drain while sending. Neither waits on a thread.
 uint64_t RTCDataChannel::QueuedAmount() const {
   if (_jingleDataChannel == nullptr || _buffered_amount == 0) {
     return _buffered_amount;
   }
-  auto in_flight = _in_flight->load();
-  return std::min<uint64_t>(
-      _buffered_amount, _jingleDataChannel->buffered_amount() + in_flight);
+  auto in_flight = _send_queue->in_flight.load();
+  auto native = _send_queue->native_at_send.load();
+  return std::min<uint64_t>(_buffered_amount, native + in_flight);
 }
 
 Napi::Value RTCDataChannel::GetBufferedAmount(const Napi::CallbackInfo &info) {

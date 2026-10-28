@@ -347,7 +347,9 @@ test("send() does not wait on a libwebrtc thread", async (t) => {
 
 // bufferedAmount includes a message as soon as send() returns, as the spec
 // requires, even while libwebrtc has not taken it yet; under-reporting would
-// let a sender ignore backpressure.
+// let a sender ignore backpressure. What was queued before may drain between
+// two reads (the network thread keeps sending), so only the message just sent
+// is certain to be counted.
 test("bufferedAmount covers a message as soon as send() returns", async (t) => {
   const { a, b } = await connectedPair();
   b.ondatachannel = ({ channel: remote }) => {
@@ -357,13 +359,10 @@ test("bufferedAmount covers a message as soon as send() returns", async (t) => {
   await whenOpen(channel);
   const CHUNK = 64 * 1024;
   const short = [];
-  let sent = 0;
   for (let i = 0; i < 32; i++) {
-    const before = channel.bufferedAmount;
     channel.send(new Uint8Array(CHUNK));
-    sent += CHUNK;
     const after = channel.bufferedAmount;
-    if (after < before + CHUNK && after < sent) short.push(`${i}:${before}->${after}`);
+    if (after < CHUNK) short.push(`${i}:${after}`);
   }
   t.deepEqual(short, [], "bufferedAmount grew by the message right after send()");
   await until(() => channel.bufferedAmount === 0, 15000, "drained").catch(() => {});
@@ -388,6 +387,69 @@ test("messages sent back to back arrive in order", async (t) => {
   const misplaced = got.filter((n, i) => n !== i).length;
   t.equal(got.length, COUNT, `every message arrived (${got.length}/${COUNT})`);
   t.equal(misplaced, 0, "in the order they were sent");
+  a.close();
+  b.close();
+  t.end();
+});
+
+// bufferedAmount on a channel with data queued must not wait on a libwebrtc
+// thread either: a sender waiting for its queue to drain reads it over and
+// over (planx's drain loop, thousands of times a second), and each native read
+// is a blocking hop (20000 reads took ~184 ms with 8 MiB queued).
+test("bufferedAmount of a busy channel does not wait on a libwebrtc thread", async (t) => {
+  const { a, b } = await connectedPair();
+  b.ondatachannel = ({ channel: remote }) => {
+    remote.onmessage = () => {};
+  };
+  const channel = a.createDataChannel("busy");
+  await whenOpen(channel);
+  for (let i = 0; i < 128; i++) channel.send(new Uint8Array(64 * 1024));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const queued = channel.bufferedAmount;
+  const start = process.hrtime.bigint();
+  for (let i = 0; i < 20000; i++) void channel.bufferedAmount;
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  if (queued > 0) {
+    t.ok(ms < 30, `20000 reads of a busy bufferedAmount (${queued} queued) take ${ms.toFixed(1)}ms`);
+  } else {
+    t.pass(`the queue drained before the reads (${ms.toFixed(1)}ms)`);
+  }
+  await until(() => channel.bufferedAmount === 0, 15000, "drained").catch(() => {});
+  t.equal(channel.bufferedAmount, 0, "and returns to 0 once sent");
+  a.close();
+  b.close();
+  t.end();
+});
+
+// While a sender keeps sending, bufferedAmount follows the queue as it drains,
+// not only in the 100 KiB steps (or at zero) in which libwebrtc reports what
+// left; a sender that waits for a low-water mark below 100 KiB would otherwise
+// wait for the queue to empty.
+test("bufferedAmount follows the drain finer than libwebrtc's 100 KiB reports", async (t) => {
+  const { a, b } = await connectedPair();
+  b.ondatachannel = ({ channel: remote }) => {
+    remote.onmessage = () => {};
+  };
+  const channel = a.createDataChannel("drain");
+  await whenOpen(channel);
+  for (let i = 0; i < 128; i++) channel.send(new Uint8Array(64 * 1024));
+  const steps = [];
+  let last = channel.bufferedAmount;
+  while (last > 0 && steps.length < 2000) {
+    channel.send(new Uint8Array(1));
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    const now = channel.bufferedAmount;
+    if (now < last) steps.push(last - now);
+    last = now;
+  }
+  const fine = steps.filter((drop) => drop < 100 * 1024).length;
+  if (steps.length > 0) {
+    t.ok(fine > 0, `some drops are under 100 KiB (${fine} of ${steps.length}, largest ${Math.max(...steps)})`);
+  } else {
+    t.pass("the queue drained before the first sample");
+  }
+  await until(() => channel.bufferedAmount === 0, 15000, "drained").catch(() => {});
+  t.equal(channel.bufferedAmount, 0, "and returns to 0 once sent");
   a.close();
   b.close();
   t.end();

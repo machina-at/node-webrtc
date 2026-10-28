@@ -27,25 +27,42 @@ namespace node_webrtc {
 
 class DataChannelObserver;
 
-// The on_complete of a SendAsync(): takes `size` back off the in-flight count
-// when called, or when destroyed uncalled (libwebrtc drops the task when the
-// transport is not connected). Holds the count by shared_ptr because it can
-// outlive the RTCDataChannel on the network thread.
-class InFlightGuard {
+// What the network thread tells the JS thread about the send queue, so
+// bufferedAmount never waits on it: bytes handed to SendAsync() whose task has
+// not run yet, and the native buffered_amount() right after the last send that
+// ran. `channel` is the proxy while the RTCDataChannel holds it; the network
+// thread reads it under the mutex and never takes a reference, because
+// dropping the last one there would block on the signaling thread.
+struct SendQueueView {
+  std::atomic<uint64_t> in_flight{0};
+  std::atomic<uint64_t> native_at_send{0};
+  std::mutex mutex;
+  webrtc::DataChannelInterface *channel = nullptr;
+
+  void Attach(webrtc::DataChannelInterface *native);
+  void Detach();
+};
+
+// The on_complete of a SendAsync(): on the network thread, right after the
+// send, records the native amount and takes `size` back off in_flight; when
+// destroyed uncalled (libwebrtc drops the task when the transport is not
+// connected) it only gives `size` back. Holds the view by shared_ptr because
+// it can outlive the RTCDataChannel on the network thread.
+class SendCompletion {
 public:
-  InFlightGuard(std::shared_ptr<std::atomic<uint64_t>> counter, uint64_t size);
-  InFlightGuard(InFlightGuard &&other) noexcept;
-  InFlightGuard(const InFlightGuard &) = delete;
-  InFlightGuard &operator=(const InFlightGuard &) = delete;
-  InFlightGuard &operator=(InFlightGuard &&) = delete;
-  ~InFlightGuard();
+  SendCompletion(std::shared_ptr<SendQueueView> view, uint64_t size);
+  SendCompletion(SendCompletion &&other) noexcept;
+  SendCompletion(const SendCompletion &) = delete;
+  SendCompletion &operator=(const SendCompletion &) = delete;
+  SendCompletion &operator=(SendCompletion &&) = delete;
+  ~SendCompletion();
 
   void operator()(webrtc::RTCError error) &&;
 
 private:
   void Release();
 
-  std::shared_ptr<std::atomic<uint64_t>> _counter;
+  std::shared_ptr<SendQueueView> _view;
   uint64_t _size;
 };
 
@@ -146,10 +163,8 @@ private:
   // channel is gone it holds the last native value. readyState follows the
   // events delivered to JS.
   uint64_t _buffered_amount = 0;
-  // Bytes handed to SendAsync() whose task has not run on the network thread
-  // yet, so the native buffered_amount() does not include them.
-  std::shared_ptr<std::atomic<uint64_t>> _in_flight =
-      std::make_shared<std::atomic<uint64_t>>(0);
+  std::shared_ptr<SendQueueView> _send_queue =
+      std::make_shared<SendQueueView>();
   uint64_t _buffered_amount_low_threshold = 0;
   // Set by a send() that takes bufferedAmount above the threshold; the next
   // OnBufferedAmountChange that finds it at or below fires bufferedamountlow.
